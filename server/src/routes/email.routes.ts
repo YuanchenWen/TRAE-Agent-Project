@@ -6,15 +6,19 @@ import {
 } from 'express'
 import { authMiddleware } from '../middleware'
 import { EmailService } from '../services/email.service'
+import { EmailAgentService } from '../services/email-agent.service'
 import { MiniMaxAI } from '../ai/minimax.service'
 import { type AuthSession } from '../services/auth.service'
 import { type EmailQuery } from '../types/email'
+import { type EmailAgentContext } from '../types/email-agent'
 import { errorResponse, successResponse } from '../utils/response'
 
 const router = Router()
 const aiProvider = new MiniMaxAI()
 
 const getEmailService = (): EmailService => new EmailService('gmail', aiProvider)
+const getEmailAgentService = (): EmailAgentService =>
+  new EmailAgentService(getEmailService(), aiProvider)
 
 type AsyncRouteHandler = (
   req: Request,
@@ -54,6 +58,31 @@ router.get(
     const emailService = getEmailService()
     const emails = await emailService.getMailList(session.tokens, buildQuery(req))
     successResponse(res, emails, 'Inbox loaded')
+  }),
+)
+
+router.post(
+  '/agent',
+  asyncHandler(async (req, res) => {
+    const session = getSession(res)
+    const emailAgentService = getEmailAgentService()
+    const body = req.body as {
+      message?: string
+      context?: EmailAgentContext
+    }
+
+    if (typeof body.message !== 'string' || body.message.trim().length === 0) {
+      errorResponse(res, '"message" must be a non-empty string.', 400)
+      return
+    }
+
+    const result = await emailAgentService.run(
+      session.tokens,
+      body.message,
+      body.context,
+    )
+
+    successResponse(res, result, 'Email agent completed')
   }),
 )
 

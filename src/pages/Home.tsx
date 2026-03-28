@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Bot,
   Inbox,
   LoaderCircle,
   LogOut,
   Mail,
+  MessageSquareText,
   RefreshCw,
+  SendHorizontal,
   ShieldCheck,
   Sparkles,
   WandSparkles,
@@ -87,11 +90,75 @@ interface SendReplyPayload {
   }
 }
 
+interface EmailAgentContextPayload {
+  lastMatchedEmailId?: string
+  lastMatchedThreadId?: string
+  confirmedEmailId?: string
+  selectedEmailId?: string
+}
+
+interface EmailAgentCandidatePayload {
+  id: string
+  threadId: string
+  subject: string
+  from: EmailAddress
+  date: string
+  snippet: string
+}
+
+interface EmailAgentResponse {
+  status: 'completed' | 'needs_disambiguation' | 'not_found'
+  action: 'summarize' | 'draft_reply'
+  assistantMessage: string
+  matchedEmail?: Email
+  candidates?: EmailAgentCandidatePayload[]
+  summary?: string
+  replyDraft?: {
+    to: string
+    subject: string
+    body: string
+  }
+  context: {
+    lastMatchedEmailId?: string
+    lastMatchedThreadId?: string
+  }
+}
+
+interface AgentChatMessage {
+  id: string
+  role: 'user' | 'assistant'
+  text: string
+  candidates?: EmailAgentCandidatePayload[]
+  command?: string
+}
+
+interface StoredMatchedEmail {
+  id: string
+  threadId: string
+  subject: string
+  fromLabel: string
+  date: string
+}
+
+interface DetailLoadOptions {
+  resetAiOutputs?: boolean
+}
+
 type ReplyTone = 'professional' | 'friendly' | 'formal' | 'casual'
 type ReplyLength = 'short' | 'medium' | 'long'
 
 const sectionLabelClass =
   'text-[0.72rem] font-semibold uppercase tracking-[0.24em] text-stone-500'
+const agentContextStorageKey = 'trae-agent-email-context'
+const agentMatchStorageKey = 'trae-agent-email-match'
+const initialAgentMessages: AgentChatMessage[] = [
+  {
+    id: 'agent-welcome',
+    role: 'assistant',
+    text:
+      'Describe the email you want. I can find it, summarize it, or draft a reply for it.',
+  },
+]
 
 const dateFormatter = new Intl.DateTimeFormat('en-US', {
   month: 'short',
@@ -102,11 +169,24 @@ const dateFormatter = new Intl.DateTimeFormat('en-US', {
 
 async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
   const response = await fetch(input, init)
-  const payload = (await response.json().catch(() => null)) as ApiEnvelope<T> | null
+  const rawText = await response.text()
+  let payload: ApiEnvelope<T> | null = null
+
+  if (rawText) {
+    try {
+      payload = JSON.parse(rawText) as ApiEnvelope<T>
+    } catch {
+      payload = null
+    }
+  }
+
+  const fallbackMessage = rawText.trim()
 
   if (!response.ok || !payload) {
     throw new Error(
-      payload?.error ?? payload?.message ?? `Request failed with status ${response.status}`,
+      payload?.error ??
+        payload?.message ??
+        (fallbackMessage || `Request failed with status ${response.status}`),
     )
   }
 
@@ -115,6 +195,19 @@ async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> 
   }
 
   return payload.data
+}
+
+const readSessionStorage = <T,>(key: string): T | null => {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  try {
+    const value = window.sessionStorage.getItem(key)
+    return value ? (JSON.parse(value) as T) : null
+  } catch {
+    return null
+  }
 }
 
 const formatPeople = (addresses: EmailAddress[] | undefined): string => {
@@ -126,6 +219,33 @@ const formatPeople = (addresses: EmailAddress[] | undefined): string => {
     .map((address) => address.name || address.email)
     .join(', ')
 }
+
+const formatAddress = (address: EmailAddress | undefined): string =>
+  address?.name || address?.email || 'Unknown sender'
+
+const createAgentMessage = (
+  role: AgentChatMessage['role'],
+  text: string,
+  extras: Partial<Pick<AgentChatMessage, 'candidates' | 'command'>> = {},
+): AgentChatMessage => ({
+  id: `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  role,
+  text,
+  ...extras,
+})
+
+const upsertEmail = (currentEmails: Email[], email: Email): Email[] => {
+  const nextEmails = [email, ...currentEmails.filter((item) => item.id !== email.id)]
+  return nextEmails.slice(0, Math.max(currentEmails.length, 1))
+}
+
+const toStoredMatchedEmail = (email: Email): StoredMatchedEmail => ({
+  id: email.id,
+  threadId: email.threadId,
+  subject: email.subject,
+  fromLabel: formatAddress(email.from),
+  date: email.date,
+})
 
 export default function Home() {
   const [authLoading, setAuthLoading] = useState(true)
@@ -159,6 +279,21 @@ export default function Home() {
   const [autoReplyLoading, setAutoReplyLoading] = useState(false)
   const [sendStatus, setSendStatus] = useState('')
   const [sendError, setSendError] = useState('')
+  const detailLoadOptionsRef = useRef<DetailLoadOptions | null>(null)
+  const selectedEmailIdRef = useRef('')
+
+  const [agentInput, setAgentInput] = useState('')
+  const [agentLoading, setAgentLoading] = useState(false)
+  const [agentError, setAgentError] = useState('')
+  const [agentMessages, setAgentMessages] =
+    useState<AgentChatMessage[]>(initialAgentMessages)
+  const [agentContext, setAgentContext] = useState<EmailAgentContextPayload>(
+    () => readSessionStorage<EmailAgentContextPayload>(agentContextStorageKey) ?? {},
+  )
+  const [recentMatchedEmail, setRecentMatchedEmail] =
+    useState<StoredMatchedEmail | null>(
+      () => readSessionStorage<StoredMatchedEmail>(agentMatchStorageKey) ?? null,
+    )
 
   const selectedEmailPreview = useMemo(
     () => selectedEmail?.body?.plain || selectedEmail?.snippet || '',
@@ -186,20 +321,40 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
-    if (!session) {
-      return
-    }
-
-    void loadEmails('in:inbox')
-  }, [session])
+    selectedEmailIdRef.current = selectedEmailId
+  }, [selectedEmailId])
 
   useEffect(() => {
-    if (!selectedEmailId) {
+    if (typeof window === 'undefined') {
       return
     }
 
-    void loadEmailDetail(selectedEmailId)
-  }, [selectedEmailId])
+    if (agentContext.lastMatchedEmailId || agentContext.lastMatchedThreadId) {
+      window.sessionStorage.setItem(
+        agentContextStorageKey,
+        JSON.stringify(agentContext),
+      )
+      return
+    }
+
+    window.sessionStorage.removeItem(agentContextStorageKey)
+  }, [agentContext])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    if (recentMatchedEmail) {
+      window.sessionStorage.setItem(
+        agentMatchStorageKey,
+        JSON.stringify(recentMatchedEmail),
+      )
+      return
+    }
+
+    window.sessionStorage.removeItem(agentMatchStorageKey)
+  }, [recentMatchedEmail])
 
   const loadSession = async () => {
     setAuthLoading(true)
@@ -214,7 +369,12 @@ export default function Home() {
     }
   }
 
-  const loadEmails = async (query: string) => {
+  const selectEmail = (emailId: string, options?: DetailLoadOptions) => {
+    detailLoadOptionsRef.current = options ?? { resetAiOutputs: true }
+    setSelectedEmailId(emailId)
+  }
+
+  const loadEmails = useCallback(async (query: string) => {
     setEmailsLoading(true)
     setEmailsError('')
 
@@ -224,28 +384,43 @@ export default function Home() {
       )
 
       setEmails(payload.emails)
-      setSelectedEmailId((currentId) =>
-        currentId && payload.emails.some((email) => email.id === currentId)
-          ? currentId
-          : payload.emails[0]?.id ?? '',
-      )
+      const nextSelectedId =
+        selectedEmailIdRef.current &&
+        payload.emails.some((email) => email.id === selectedEmailIdRef.current)
+          ? selectedEmailIdRef.current
+          : payload.emails[0]?.id ?? ''
+
+      if (!nextSelectedId) {
+        setSelectedEmailId('')
+        setSelectedEmail(null)
+        return
+      }
+
+      if (nextSelectedId !== selectedEmailIdRef.current) {
+        selectEmail(nextSelectedId)
+      }
     } catch (error) {
       setEmailsError(error instanceof Error ? error.message : 'Failed to load inbox.')
     } finally {
       setEmailsLoading(false)
     }
-  }
+  }, [])
 
-  const loadEmailDetail = async (emailId: string) => {
+  const loadEmailDetail = useCallback(async (emailId: string, options?: DetailLoadOptions) => {
+    const shouldResetAiOutputs = options?.resetAiOutputs !== false
+
     setDetailLoading(true)
-    setSummary('')
-    setReplyTo('')
-    setReplySubject('')
-    setReplyDraft('')
-    setSummaryError('')
-    setReplyError('')
-    setSendStatus('')
-    setSendError('')
+
+    if (shouldResetAiOutputs) {
+      setSummary('')
+      setReplyTo('')
+      setReplySubject('')
+      setReplyDraft('')
+      setSummaryError('')
+      setReplyError('')
+      setSendStatus('')
+      setSendError('')
+    }
 
     try {
       const email = await fetchJson<Email>(`/api/emails/${emailId}`)
@@ -256,6 +431,34 @@ export default function Home() {
     } finally {
       setDetailLoading(false)
     }
+  }, [])
+
+  useEffect(() => {
+    if (!session) {
+      return
+    }
+
+    void loadEmails('in:inbox')
+  }, [session, loadEmails])
+
+  useEffect(() => {
+    if (!selectedEmailId) {
+      return
+    }
+
+    const nextOptions = detailLoadOptionsRef.current
+    detailLoadOptionsRef.current = null
+
+    void loadEmailDetail(selectedEmailId, nextOptions ?? undefined)
+  }, [selectedEmailId, loadEmailDetail])
+
+  const appendAgentMessage = (message: AgentChatMessage) => {
+    setAgentMessages((currentMessages) => [...currentMessages, message])
+  }
+
+  const clearAgentMemory = () => {
+    setAgentContext({})
+    setRecentMatchedEmail(null)
   }
 
   const connectGmail = () => {
@@ -288,6 +491,10 @@ export default function Home() {
     setReplyDraft('')
     setSendStatus('')
     setSendError('')
+    setAgentInput('')
+    setAgentError('')
+    setAgentMessages(initialAgentMessages)
+    clearAgentMemory()
   }
 
   const organizeMailbox = async () => {
@@ -456,6 +663,114 @@ export default function Home() {
     }
   }
 
+  const runEmailAgent = async (
+    command: string,
+    options?: {
+      confirmedEmailId?: string
+      userFacingMessage?: string
+    },
+  ) => {
+    const trimmedCommand = command.trim()
+
+    if (!trimmedCommand || agentLoading) {
+      return
+    }
+
+    appendAgentMessage(
+      createAgentMessage('user', options?.userFacingMessage ?? trimmedCommand),
+    )
+
+    setAgentLoading(true)
+    setAgentError('')
+
+    try {
+      const payload = await fetchJson<EmailAgentResponse>('/api/emails/agent', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          message: trimmedCommand,
+          context: {
+            ...agentContext,
+            selectedEmailId,
+            ...(options?.confirmedEmailId
+              ? { confirmedEmailId: options.confirmedEmailId }
+              : {}),
+          },
+        }),
+      })
+
+      appendAgentMessage(
+        createAgentMessage('assistant', payload.assistantMessage, {
+          candidates: payload.candidates,
+          command:
+            payload.status === 'needs_disambiguation' ? trimmedCommand : undefined,
+        }),
+      )
+
+      if (payload.status === 'completed') {
+        if (payload.matchedEmail) {
+          setSelectedEmail(payload.matchedEmail)
+          setEmails((currentEmails) => upsertEmail(currentEmails, payload.matchedEmail!))
+          setRecentMatchedEmail(toStoredMatchedEmail(payload.matchedEmail))
+          setAgentContext(payload.context)
+
+          if (payload.matchedEmail.id !== selectedEmailId) {
+            selectEmail(payload.matchedEmail.id, { resetAiOutputs: false })
+          }
+        }
+
+        if (payload.action === 'summarize') {
+          setSummary(payload.summary ?? '')
+          setSummaryError('')
+        }
+
+        if (payload.action === 'draft_reply' && payload.replyDraft) {
+          setReplyTo(payload.replyDraft.to)
+          setReplySubject(payload.replyDraft.subject)
+          setReplyDraft(payload.replyDraft.body)
+          setReplyError('')
+          setSendStatus('')
+          setSendError('')
+        }
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to run the email agent.'
+
+      setAgentError(message)
+      appendAgentMessage(createAgentMessage('assistant', message))
+
+      if (/not authenticated|not connected|gmail account/i.test(message)) {
+        setSession(null)
+        clearAgentMemory()
+      }
+    } finally {
+      setAgentLoading(false)
+    }
+  }
+
+  const handleAgentSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+
+    const nextCommand = agentInput.trim()
+
+    if (!nextCommand) {
+      return
+    }
+
+    setAgentInput('')
+    void runEmailAgent(nextCommand)
+  }
+
+  const confirmAgentCandidate = (command: string, candidate: EmailAgentCandidatePayload) => {
+    void runEmailAgent(command, {
+      confirmedEmailId: candidate.id,
+      userFacingMessage: `Use "${candidate.subject}" from ${formatAddress(candidate.from)}.`,
+    })
+  }
+
   if (authLoading) {
     return (
       <main className="flex min-h-screen items-center justify-center px-6">
@@ -614,6 +929,152 @@ export default function Home() {
               </div>
             </section>
 
+            <section className="mt-6 rounded-[1.75rem] border border-stone-900/10 bg-[linear-gradient(135deg,rgba(255,255,255,0.9),rgba(244,247,240,0.86))] p-5 shadow-[0_14px_40px_rgba(70,46,27,0.08)] backdrop-blur sm:p-6">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <p className={sectionLabelClass}>Email Agent</p>
+                  <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-stone-950">
+                    Ask for the email you want
+                  </h2>
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-stone-600">
+                    Use natural language to find the right message, summarize it, or
+                    draft a reply without manually clicking through the inbox first.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-3">
+                  {recentMatchedEmail ? (
+                    <div className="rounded-2xl border border-stone-200 bg-white/80 px-4 py-3 text-sm text-stone-700 shadow-sm">
+                      <p className={sectionLabelClass}>Last matched</p>
+                      <p className="mt-2 font-medium text-stone-900">
+                        {recentMatchedEmail.subject}
+                      </p>
+                      <p className="mt-1 text-xs text-stone-500">
+                        {recentMatchedEmail.fromLabel} ·{' '}
+                        {dateFormatter.format(new Date(recentMatchedEmail.date))}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-stone-300 bg-white/70 px-4 py-3 text-sm text-stone-600">
+                      Your last matched email will appear here for follow-up commands.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-5 grid gap-5 lg:grid-cols-[1.1fr_0.9fr]">
+                <div className="rounded-[1.5rem] border border-stone-200 bg-white/85 p-4 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <p className={sectionLabelClass}>Conversation</p>
+                    {agentLoading ? (
+                      <LoaderCircle className="h-4 w-4 animate-spin text-emerald-600" />
+                    ) : (
+                      <Bot className="h-4 w-4 text-emerald-600" />
+                    )}
+                  </div>
+
+                  <div className="mt-4 max-h-[360px] space-y-3 overflow-auto pr-1">
+                    {agentMessages.map((message) => (
+                      <div
+                        key={message.id}
+                        className={`rounded-2xl px-4 py-3 text-sm leading-6 ${
+                          message.role === 'user'
+                            ? 'ml-auto max-w-[92%] border border-stone-900 bg-stone-950 text-white'
+                            : 'max-w-[95%] border border-stone-200 bg-stone-50/90 text-stone-700'
+                        }`}
+                      >
+                        <p>{message.text}</p>
+                        {message.candidates?.length ? (
+                          <div className="mt-3 space-y-2">
+                            {message.candidates.map((candidate) => (
+                              <button
+                                type="button"
+                                key={candidate.id}
+                                onClick={() =>
+                                  message.command
+                                    ? confirmAgentCandidate(message.command, candidate)
+                                    : undefined
+                                }
+                                disabled={agentLoading}
+                                className="flex w-full items-start justify-between gap-3 rounded-2xl border border-stone-200 bg-white px-3 py-3 text-left text-stone-800 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                <div>
+                                  <p className="font-medium">{candidate.subject}</p>
+                                  <p className="mt-1 text-xs text-stone-500">
+                                    {formatAddress(candidate.from)}
+                                  </p>
+                                  <p className="mt-2 text-xs leading-5 text-stone-600">
+                                    {candidate.snippet || 'No preview available.'}
+                                  </p>
+                                </div>
+                                <span className="whitespace-nowrap text-xs text-stone-500">
+                                  {dateFormatter.format(new Date(candidate.date))}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="rounded-[1.5rem] border border-stone-200 bg-stone-950 p-4 text-stone-50 shadow-sm">
+                    <div className="flex items-center gap-2">
+                      <MessageSquareText className="h-4 w-4 text-amber-300" />
+                      <p className="text-xs uppercase tracking-[0.24em] text-stone-400">
+                        Prompt ideas
+                      </p>
+                    </div>
+                    <div className="mt-4 space-y-3 text-sm leading-6 text-stone-200">
+                      <p>"Summarize the pricing email Alice sent this morning."</p>
+                      <p>"Draft a friendly reply to the last email you found."</p>
+                      <p>"Find the unread contract message from John and summarize it."</p>
+                    </div>
+                  </div>
+
+                  <form
+                    onSubmit={handleAgentSubmit}
+                    className="rounded-[1.5rem] border border-stone-200 bg-white/90 p-4 shadow-sm"
+                  >
+                    <label className={sectionLabelClass} htmlFor="agent-command">
+                      Command
+                    </label>
+                    <textarea
+                      id="agent-command"
+                      value={agentInput}
+                      onChange={(event) => setAgentInput(event.target.value)}
+                      placeholder="Example: Find the unread quote request from Alice and draft a short professional reply."
+                      rows={6}
+                      className="mt-3 w-full rounded-2xl border border-stone-200 bg-stone-50/90 px-4 py-3 text-sm leading-6 text-stone-800 outline-none transition focus:border-emerald-400 focus:bg-white"
+                    />
+                    <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="text-sm leading-6 text-stone-600">
+                        Agent results will populate the current summary or reply draft
+                        panels automatically.
+                      </p>
+                      <button
+                        type="submit"
+                        disabled={agentLoading || !agentInput.trim()}
+                        className="inline-flex items-center justify-center gap-2 rounded-full bg-emerald-600 px-4 py-3 text-sm font-medium text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {agentLoading ? (
+                          <LoaderCircle className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <SendHorizontal className="h-4 w-4" />
+                        )}
+                        {agentLoading ? 'Working...' : 'Run email agent'}
+                      </button>
+                    </div>
+                    <div className="mt-3 min-h-6 whitespace-pre-wrap text-sm leading-6 text-stone-600">
+                      {agentError || 'The agent will ask for confirmation only when several emails are close matches.'}
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </section>
+
             <section className="mt-6 grid gap-6 lg:grid-cols-[0.92fr_1.08fr]">
               <article className="rounded-[1.75rem] border border-stone-900/10 bg-white/80 p-5 shadow-[0_14px_40px_rgba(70,46,27,0.08)] backdrop-blur">
                 <div className="flex items-center justify-between">
@@ -641,7 +1102,7 @@ export default function Home() {
                     <button
                       type="button"
                       key={email.id}
-                      onClick={() => setSelectedEmailId(email.id)}
+                      onClick={() => selectEmail(email.id)}
                       className={`w-full rounded-2xl border px-4 py-4 text-left transition ${
                         selectedEmailId === email.id
                           ? 'border-stone-950 bg-stone-950 text-white shadow-[0_16px_30px_rgba(26,26,26,0.15)]'

@@ -1,6 +1,11 @@
 import { AIProvider } from '../ai/base.ai'
 import { MiniMaxAI } from '../ai/minimax.service'
 import {
+  EmailAgentCandidate,
+  EmailAgentIntent,
+  EmailCandidateResolution,
+} from '../types/email-agent'
+import {
   SummarizeOptions,
   ReplyContext,
   SentimentResult,
@@ -25,6 +30,22 @@ export class AIService {
 
   async analyzeSentiment(text: string): Promise<SentimentResult> {
     return this.aiProvider.analyzeSentiment(text)
+  }
+
+  async interpretEmailCommand(message: string): Promise<EmailAgentIntent> {
+    return this.aiProvider.interpretEmailCommand(message)
+  }
+
+  async resolveEmailCandidate(options: {
+    message: string
+    intent: EmailAgentIntent
+    candidates: Array<
+      EmailAgentCandidate & {
+        bodyPreview?: string
+      }
+    >
+  }): Promise<EmailCandidateResolution> {
+    return this.aiProvider.resolveEmailCandidate(options)
   }
 
   async listModels(): Promise<Model[]> {

@@ -1,6 +1,11 @@
 import { AIProvider } from './base.ai'
 import { config } from '../config'
 import {
+  EmailAgentCandidate,
+  EmailAgentIntent,
+  EmailCandidateResolution,
+} from '../types/email-agent'
+import {
   SummarizeOptions,
   ReplyContext,
   SentimentResult,
@@ -51,6 +56,113 @@ const extractJsonObject = (value: string): string => {
   }
 
   return value.slice(startIndex, endIndex + 1)
+}
+
+const clampConfidence = (value: unknown): number => {
+  const parsedValue = Number(value)
+
+  if (!Number.isFinite(parsedValue)) {
+    return 0
+  }
+
+  return Math.max(0, Math.min(1, parsedValue))
+}
+
+const normalizeStringArray = (value: unknown): string[] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
+    .filter(Boolean)
+}
+
+const isValidOptionalDate = (value: unknown): value is string =>
+  typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
+
+const normalizeEmailIntent = (value: unknown): EmailAgentIntent => {
+  const payload =
+    typeof value === 'object' && value !== null
+      ? (value as Record<string, unknown>)
+      : {}
+
+  const searchHintsValue =
+    typeof payload.searchHints === 'object' && payload.searchHints !== null
+      ? (payload.searchHints as Record<string, unknown>)
+      : {}
+
+  const desiredTone =
+    payload.desiredTone === 'professional' ||
+    payload.desiredTone === 'friendly' ||
+    payload.desiredTone === 'formal' ||
+    payload.desiredTone === 'casual'
+      ? payload.desiredTone
+      : undefined
+
+  const desiredLength =
+    payload.desiredLength === 'short' ||
+    payload.desiredLength === 'medium' ||
+    payload.desiredLength === 'long'
+      ? payload.desiredLength
+      : undefined
+
+  return {
+    action: payload.action === 'draft_reply' ? 'draft_reply' : 'summarize',
+    usePreviousMatch: payload.usePreviousMatch === true,
+    mailboxScope: payload.mailboxScope === 'all_mail' ? 'all_mail' : 'inbox',
+    searchHints: {
+      sender:
+        typeof searchHintsValue.sender === 'string'
+          ? searchHintsValue.sender.trim()
+          : undefined,
+      subject:
+        typeof searchHintsValue.subject === 'string'
+          ? searchHintsValue.subject.trim()
+          : undefined,
+      keywords: normalizeStringArray(searchHintsValue.keywords),
+      after: isValidOptionalDate(searchHintsValue.after)
+        ? searchHintsValue.after
+        : undefined,
+      before: isValidOptionalDate(searchHintsValue.before)
+        ? searchHintsValue.before
+        : undefined,
+      unread:
+        typeof searchHintsValue.unread === 'boolean'
+          ? searchHintsValue.unread
+          : undefined,
+      starred:
+        typeof searchHintsValue.starred === 'boolean'
+          ? searchHintsValue.starred
+          : undefined,
+      rawQuery:
+        typeof searchHintsValue.rawQuery === 'string'
+          ? searchHintsValue.rawQuery.trim()
+          : undefined,
+    },
+    desiredTone,
+    desiredLength,
+  }
+}
+
+const normalizeCandidateResolution = (value: unknown): EmailCandidateResolution => {
+  const payload =
+    typeof value === 'object' && value !== null
+      ? (value as Record<string, unknown>)
+      : {}
+
+  return {
+    selectedEmailId:
+      typeof payload.selectedEmailId === 'string' && payload.selectedEmailId.trim().length > 0
+        ? payload.selectedEmailId.trim()
+        : undefined,
+    confidence: clampConfidence(payload.confidence),
+    reason:
+      typeof payload.reason === 'string' && payload.reason.trim().length > 0
+        ? payload.reason.trim()
+        : 'No ranking reason provided.',
+    candidateIds: normalizeStringArray(payload.candidateIds),
+  }
 }
 
 export class MiniMaxAI extends AIProvider {
@@ -142,6 +254,38 @@ export class MiniMaxAI extends AIProvider {
     }
   }
 
+  async interpretEmailCommand(message: string): Promise<EmailAgentIntent> {
+    const response = await this.createJsonCompletion<unknown>({
+      system:
+        'You convert natural-language mail assistant requests into strict JSON for an email agent. Prefer conservative extraction and do not invent filters the user did not imply.',
+      prompt: `Interpret the user's email request and return JSON only.\n\nRules:\n- action must be "summarize" or "draft_reply".\n- usePreviousMatch should be true only when the user refers to a previously discussed email such as "that one", "the last one", or "刚才那封".\n- mailboxScope must be "inbox" unless the user explicitly asks to search beyond the inbox.\n- searchHints may include sender, subject, keywords, after, before, unread, starred, rawQuery.\n- after/before must be YYYY-MM-DD when present.\n- desiredTone and desiredLength are only for draft replies.\n- Keep keywords concise and relevant.\n\nReturn this shape exactly:\n{\n  "action": "summarize" | "draft_reply",\n  "usePreviousMatch": boolean,\n  "mailboxScope": "inbox" | "all_mail",\n  "searchHints": {\n    "sender"?: string,\n    "subject"?: string,\n    "keywords"?: string[],\n    "after"?: "YYYY-MM-DD",\n    "before"?: "YYYY-MM-DD",\n    "unread"?: boolean,\n    "starred"?: boolean,\n    "rawQuery"?: string\n  },\n  "desiredTone"?: "professional" | "friendly" | "formal" | "casual",\n  "desiredLength"?: "short" | "medium" | "long"\n}\n\nUser request:\n${message}`,
+      maxTokens: 700,
+      temperature: 0.1,
+    })
+
+    return normalizeEmailIntent(response)
+  }
+
+  async resolveEmailCandidate(options: {
+    message: string
+    intent: EmailAgentIntent
+    candidates: Array<
+      EmailAgentCandidate & {
+        bodyPreview?: string
+      }
+    >
+  }): Promise<EmailCandidateResolution> {
+    const response = await this.createJsonCompletion<unknown>({
+      system:
+        'You are matching a natural-language request to the most likely email candidate. Return strict JSON only. Be conservative when candidates are ambiguous.',
+      prompt: `Choose the best matching email candidate for the user's request.\n\nReturn this shape exactly:\n{\n  "selectedEmailId": string | null,\n  "confidence": number,\n  "reason": string,\n  "candidateIds": string[]\n}\n\nRequirements:\n- candidateIds must contain up to 3 candidate ids ranked best to worst.\n- confidence must be between 0 and 1.\n- If no candidate is plausible, set selectedEmailId to null and confidence to 0.\n- Prefer candidates whose sender, subject, date, snippet, and body preview best match the request.\n- If several candidates are close, keep confidence below 0.75.\n\nUser request:\n${options.message}\n\nParsed intent:\n${JSON.stringify(options.intent, null, 2)}\n\nCandidates:\n${JSON.stringify(options.candidates, null, 2)}`,
+      maxTokens: 900,
+      temperature: 0.1,
+    })
+
+    return normalizeCandidateResolution(response)
+  }
+
   listModels(): Model[] {
     const ids = new Set<string>([this.model, ...DOCUMENTED_COMPAT_MODELS])
 
@@ -185,6 +329,16 @@ export class MiniMaxAI extends AIProvider {
     }
 
     return text
+  }
+
+  private async createJsonCompletion<T>(options: {
+    system: string
+    prompt: string
+    maxTokens: number
+    temperature?: number
+  }): Promise<T> {
+    const response = await this.createTextCompletion(options)
+    return JSON.parse(extractJsonObject(response)) as T
   }
 
   private async createMessage(options: {

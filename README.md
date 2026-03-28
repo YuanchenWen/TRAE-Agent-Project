@@ -31,6 +31,8 @@ npm install
 npm run dev
 ```
 
+Windows PowerShell note: if you hit the `npm.ps1 cannot be loaded` execution-policy error, use `npm.cmd install` and `npm.cmd run dev` instead, or run the same commands from Command Prompt.
+
 Frontend: `http://localhost:5173`
 
 Backend health check: `http://localhost:3001/api/health`
