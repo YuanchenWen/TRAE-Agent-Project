@@ -1,0 +1,10 @@
+{
+  "watch": ["server/src"],
+  "ext": "ts,mts,js,json",
+  "ignore": ["server/dist/*"],
+  "exec": "node --import tsx server/src/server.ts",
+  "env": {
+    "NODE_ENV": "development"
+  },
+  "delay": 1000
+}
