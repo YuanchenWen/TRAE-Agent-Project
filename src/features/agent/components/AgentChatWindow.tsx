@@ -12,6 +12,7 @@ import {
   SendHorizonal,
   Sparkles,
 } from 'lucide-react'
+import { useAgentI18n } from '../i18n'
 import type {
   AgentArtifact,
   AgentResponse,
@@ -27,6 +28,8 @@ function ToolStepCard({
 }: {
   step: AgentToolStep
 }) {
+  const { localizeToolLabel } = useAgentI18n()
+
   return (
     <div className="flex items-center justify-between rounded-[1.15rem] border border-stone-200 bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
       <div className="flex items-center gap-3">
@@ -34,7 +37,9 @@ function ToolStepCard({
           <Mail className="h-4 w-4" />
         </div>
         <div>
-          <p className="text-[1.02rem] font-medium text-stone-700">{step.label}</p>
+          <p className="text-[1.02rem] font-medium text-stone-700">
+            {localizeToolLabel(step.label)}
+          </p>
           {step.detail ? (
             <p className="text-sm text-stone-400">{step.detail}</p>
           ) : null}
@@ -57,23 +62,25 @@ function EmailSummaryArtifact({
 }: {
   artifact: Extract<AgentArtifact, { type: 'email_summary' }>
 }) {
+  const { t } = useAgentI18n()
+
   return (
     <div className="space-y-5 border-t border-b border-stone-200 py-5">
       <div className="space-y-2 text-stone-900">
-        <p className="text-[1.05rem] font-semibold">邮件内容已读取！以下是摘要：</p>
+        <p className="text-[1.05rem] font-semibold">{t('ui.emailSummaryTitle')}</p>
         <p className="text-[1.02rem]">
-          <span className="font-semibold">发件人：</span>{' '}
+          <span className="font-semibold">{t('ui.sender')}：</span>{' '}
           <span className="text-sky-600 underline decoration-sky-200 underline-offset-4">
             {artifact.from}
           </span>
         </p>
         <p className="text-[1.02rem]">
-          <span className="font-semibold">主题：</span> {artifact.subject}
+          <span className="font-semibold">{t('ui.subject')}：</span> {artifact.subject}
         </p>
       </div>
 
       <div className="space-y-3">
-        <p className="text-[1.02rem] font-semibold text-stone-900">邮件内容摘要：</p>
+        <p className="text-[1.02rem] font-semibold text-stone-900">{t('ui.summary')}：</p>
         <p className="text-[1rem] leading-8 text-stone-700">{artifact.summary}</p>
         {artifact.bullets.length > 0 ? (
           <ul className="space-y-3 pl-6 text-[1rem] leading-8 text-stone-800">
@@ -92,6 +99,8 @@ function EmailListArtifact({
 }: {
   artifact: Extract<AgentArtifact, { type: 'email_list' }>
 }) {
+  const { t } = useAgentI18n()
+
   return (
     <div className="space-y-4 border-t border-b border-stone-200 py-5">
       <p className="text-[1.05rem] font-semibold text-stone-900">{artifact.title}</p>
@@ -113,7 +122,7 @@ function EmailListArtifact({
               <span className="shrink-0 text-sm text-stone-400">{email.date}</span>
             </div>
             <p className="mt-3 text-[0.98rem] leading-7 text-stone-600">
-              {email.snippet || '暂无摘要'}
+              {email.snippet || t('ui.noSummary')}
             </p>
           </div>
         ))}
@@ -127,14 +136,16 @@ function ReplyDraftArtifact({
 }: {
   artifact: Extract<AgentArtifact, { type: 'reply_draft' }>
 }) {
+  const { t } = useAgentI18n()
+
   return (
     <div className="space-y-4 border-b border-stone-200 pb-5">
       <p className="text-[1.02rem] text-stone-900">
-        我已经帮你起草了一封回复，请确认是否满意，或者告诉我你想表达什么内容：
+        {t('ui.replyDraftIntro')}
       </p>
       <div className="space-y-4">
         <p className="text-[1.02rem] font-semibold text-stone-700">
-          Subject: <span className="font-medium text-stone-500">{artifact.subject}</span>
+          {t('ui.subject')}: <span className="font-medium text-stone-500">{artifact.subject}</span>
         </p>
         <div className="border-l-4 border-stone-300 pl-4 text-[1.05rem] leading-9 text-stone-500">
           {artifact.body.split('\n').map((line, index) => (
@@ -151,24 +162,26 @@ function SendResultArtifact({
 }: {
   artifact: Extract<AgentArtifact, { type: 'send_result' }>
 }) {
+  const { t } = useAgentI18n()
+
   return (
     <div className="space-y-4">
-      <p className="text-[1.1rem] font-semibold text-stone-900">回复已成功发送！</p>
+      <p className="text-[1.1rem] font-semibold text-stone-900">{t('ui.replySentTitle')}</p>
       <ul className="space-y-3 pl-6 text-[1rem] leading-8 text-stone-800">
         <li>
-          <span className="font-semibold">发送至：</span>{' '}
+          <span className="font-semibold">{t('ui.sentTo')}：</span>{' '}
           <span className="text-sky-600 underline decoration-sky-200 underline-offset-4">
             {artifact.to}
           </span>
         </li>
         <li>
-          <span className="font-semibold">发件账号：</span>{' '}
+          <span className="font-semibold">{t('ui.senderAccount')}：</span>{' '}
           <span className="text-sky-600 underline decoration-sky-200 underline-offset-4">
             {artifact.from}
           </span>
         </li>
         <li>
-          <span className="font-semibold">主题：</span> {artifact.subject}
+          <span className="font-semibold">{t('ui.subject')}：</span> {artifact.subject}
         </li>
       </ul>
     </div>
@@ -206,6 +219,7 @@ function AssistantMessage({
 }: {
   message: ChatMessage
 }) {
+  const { t } = useAgentI18n()
   const response = message.response
 
   return (
@@ -225,7 +239,7 @@ function AssistantMessage({
               )}
             </div>
             <span className="text-[1.02rem] font-medium text-stone-700">
-              Thought Process
+              {t('ui.thoughtProcess')}
             </span>
             <ChevronRight className="h-4 w-4 text-stone-400" />
           </div>
@@ -262,10 +276,12 @@ function UserMessage({
 }: {
   message: ChatMessage
 }) {
+  const { t } = useAgentI18n()
+
   return (
     <div className="flex items-start gap-4">
       <div className="mt-1 flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-[linear-gradient(135deg,#4f8cff,#8ed1ff)] text-sm font-semibold text-white shadow-[0_8px_24px_rgba(79,140,255,0.28)]">
-        你
+        {t('ui.you')}
       </div>
       <div className="max-w-[88%] rounded-[1.6rem] bg-stone-100 px-5 py-4 text-[1.05rem] leading-8 text-stone-600 shadow-[0_8px_24px_rgba(15,23,42,0.05)]">
         {message.content}
@@ -279,6 +295,8 @@ function EmptyState({
 }: {
   onConnectGmail: () => void | Promise<void>
 }) {
+  const { t } = useAgentI18n()
+
   return (
     <div className="mx-auto flex max-w-3xl flex-col items-center justify-center gap-6 py-24 text-center">
       <div className="flex h-16 w-16 items-center justify-center rounded-full bg-sky-100 text-sky-600">
@@ -286,10 +304,10 @@ function EmptyState({
       </div>
       <div className="space-y-3">
         <h2 className="text-3xl font-semibold tracking-[-0.04em] text-stone-900">
-          Connect Gmail first
+          {t('ui.connectGmailFirst')}
         </h2>
         <p className="text-[1.05rem] leading-8 text-stone-500">
-          先连接 Gmail，然后你就可以直接说“帮我查某个人发来的邮件，再起草一封回复”。
+          {t('ui.connectGmailDescription')}
         </p>
       </div>
       <button
@@ -298,7 +316,7 @@ function EmptyState({
         className="inline-flex items-center gap-2 rounded-full bg-stone-950 px-5 py-3 text-sm font-medium text-white transition hover:bg-stone-800"
       >
         <Mail className="h-4 w-4" />
-        Connect Gmail
+        {t('ui.connectGmail')}
       </button>
     </div>
   )
@@ -321,12 +339,14 @@ export function AgentChatWindow({
   onLogout,
   onActivateAgentSession,
 }: AgentViewState) {
+  const { locale, setLocale, t } = useAgentI18n()
+
   if (authLoading) {
     return (
       <main className="flex min-h-screen items-center justify-center px-6">
         <div className="inline-flex items-center gap-3 rounded-full border border-stone-200 bg-white px-5 py-3 text-sm text-stone-700 shadow-[0_10px_26px_rgba(15,23,42,0.08)]">
           <LoaderCircle className="h-4 w-4 animate-spin text-sky-500" />
-          Checking Gmail session...
+          {t('ui.checkingGmailSession')}
         </div>
       </main>
     )
@@ -359,6 +379,32 @@ export function AgentChatWindow({
             </div>
 
             <div className="flex items-center gap-3">
+              <div className="inline-flex items-center rounded-full border border-stone-200 bg-white p-1 shadow-[0_10px_24px_rgba(15,23,42,0.08)]">
+                <button
+                  type="button"
+                  onClick={() => setLocale('zh-CN')}
+                  className={`rounded-full px-3 py-2 text-xs font-medium transition ${
+                    locale === 'zh-CN'
+                      ? 'bg-stone-950 text-white'
+                      : 'text-stone-500 hover:text-stone-900'
+                  }`}
+                  aria-label={`${t('ui.language')}: 中文`}
+                >
+                  中文
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLocale('en-US')}
+                  className={`rounded-full px-3 py-2 text-xs font-medium transition ${
+                    locale === 'en-US'
+                      ? 'bg-stone-950 text-white'
+                      : 'text-stone-500 hover:text-stone-900'
+                  }`}
+                  aria-label={`${t('ui.language')}: English`}
+                >
+                  EN
+                </button>
+              </div>
               {session ? (
                 <button
                   type="button"
@@ -385,32 +431,32 @@ export function AgentChatWindow({
               {session ? (
                 <div className="mx-auto mb-6 flex max-w-5xl flex-wrap items-center gap-3 rounded-[1.3rem] border border-stone-200 bg-white px-4 py-4 text-sm text-stone-600 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
                   <span>
-                    Gmail: <strong>{session.user.email}</strong>
+                    {t('ui.gmail')}: <strong>{session.user.email}</strong>
                   </span>
                   <span>
-                    Agent Session:{' '}
-                    <strong>{agentSessionStatus?.active ? agentSessionStatus.email : 'inactive'}</strong>
+                    {t('ui.agentSession')}:{' '}
+                    <strong>{agentSessionStatus?.active ? agentSessionStatus.email : t('ui.inactive')}</strong>
                   </span>
                   <span>
-                    iMessage Bridge:{' '}
+                    {t('ui.imessageBridge')}:{' '}
                     <strong>
                       {bridgeStatus
                         ? bridgeStatus.enabled
                           ? bridgeStatus.started
-                            ? 'running'
-                            : 'configured'
-                          : 'disabled'
-                        : 'unknown'}
+                            ? t('ui.running')
+                            : t('ui.configured')
+                          : t('ui.disabled')
+                        : t('ui.unknown')}
                     </strong>
                   </span>
                   {bridgeStatus ? (
                     <span>
-                      Trigger: <strong>{bridgeStatus.triggerPrefix}</strong>
+                      {t('ui.trigger')}: <strong>{bridgeStatus.triggerPrefix}</strong>
                     </span>
                   ) : null}
                   {bridgeStatus?.lastError ? (
                     <span className="text-rose-600">
-                      iMessage Error: <strong>{bridgeStatus.lastError}</strong>
+                      {t('ui.imessageError')}: <strong>{bridgeStatus.lastError}</strong>
                     </span>
                   ) : null}
                   <button
@@ -424,7 +470,7 @@ export function AgentChatWindow({
                     ) : (
                       <Power className="h-4 w-4" />
                     )}
-                    Activate For iMessage
+                    {t('ui.activateForIMessage')}
                   </button>
                 </div>
               ) : null}
@@ -465,8 +511,8 @@ export function AgentChatWindow({
                     }}
                     placeholder={
                       session
-                        ? 'Ask AI anything about your inbox...'
-                        : 'Connect Gmail to start chatting...'
+                        ? t('ui.askInboxPlaceholder')
+                        : t('ui.connectPlaceholder')
                     }
                     rows={2}
                     className="min-h-[56px] w-full resize-none bg-transparent text-[1.02rem] leading-8 text-stone-700 outline-none placeholder:text-stone-400"
@@ -491,10 +537,14 @@ export function AgentChatWindow({
               <div className="mx-auto mt-3 flex max-w-5xl items-center justify-between px-2 text-sm text-stone-400">
                 <div className="flex items-center gap-2">
                   <Sparkles className="h-4 w-4 text-sky-500" />
-                  <span>{session ? `Connected as ${session.user.email}` : 'Agent idle'}</span>
+                  <span>
+                    {session
+                      ? t('ui.connectedAs', { email: session.user.email })
+                      : t('ui.agentIdle')}
+                  </span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span>Submit</span>
+                  <span>{t('ui.submit')}</span>
                   <ArrowDown className="h-4 w-4" />
                 </div>
               </div>

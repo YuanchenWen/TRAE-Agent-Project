@@ -1,4 +1,10 @@
 import { aiService } from './ai.service'
+import {
+  agentText,
+  type AgentLocale,
+  isEnglishLocale,
+  normalizeAgentLocale,
+} from './agent-locale'
 import { type AuthSession } from './auth.service'
 import {
   mailToolsService,
@@ -6,6 +12,8 @@ import {
   type ToolExecutionResult,
 } from './mail-tools.service'
 import type { ReplySuggestion } from '../types/email'
+
+export type { AgentLocale } from './agent-locale'
 
 type AgentToolStatus = 'completed' | 'failed'
 type AgentPendingActionType = 'send_reply'
@@ -101,7 +109,6 @@ export interface AgentResponse {
   pendingAction?: AgentPendingAction
 }
 
-const DEFAULT_THREAD_TITLE = 'Mail Agent'
 const MAX_TOOL_STEPS = 4
 const MAX_EMAIL_BODY_CHARS = 4500
 const MAX_SEARCH_CANDIDATES = 6
@@ -219,7 +226,7 @@ const extractBullets = (summary: string): string[] =>
     .filter(Boolean)
 
 const buildThreadTitle = (value: string | undefined): string =>
-  value?.trim() || DEFAULT_THREAD_TITLE
+  value?.trim() || ''
 
 const normalizeSearchQuery = (value: string): string =>
   value
@@ -344,6 +351,7 @@ const isConcreteQuery = (value: string): boolean => {
 }
 
 const buildSearchCandidates = (
+  locale: AgentLocale,
   message: string,
   history: AgentMessage[] | undefined,
   preferredQuery?: string,
@@ -374,39 +382,54 @@ const buildSearchCandidates = (
   }
 
   if (preferredQuery && isConcreteQuery(preferredQuery)) {
-    addCandidate(normalizeSearchQuery(preferredQuery), '按指定条件搜索')
+    addCandidate(
+      normalizeSearchQuery(preferredQuery),
+      agentText.searchSpecified(locale),
+    )
   }
 
   if (latestInboxIntent) {
-    addCandidate('in:inbox', '查看最新收件箱邮件')
+    addCandidate('in:inbox', agentText.searchLatestInbox(locale))
   }
 
   emailHints.forEach((email) => {
-    addCandidate(`from:${email}`, `按发件邮箱 ${email} 搜索`)
+    addCandidate(`from:${email}`, agentText.searchSenderEmail(locale, email))
   })
 
   if (senderHint) {
-    addCandidate(`from:"${escapeQuotedValue(senderHint)}"`, `按发件人 ${senderHint} 搜索`)
-    addCandidate(`"${escapeQuotedValue(senderHint)}"`, `按姓名关键词 ${senderHint} 搜索`)
-    addCandidate(senderHint, `按关键词 ${senderHint} 搜索`)
+    addCandidate(
+      `from:"${escapeQuotedValue(senderHint)}"`,
+      agentText.searchSender(locale, senderHint),
+    )
+    addCandidate(
+      `"${escapeQuotedValue(senderHint)}"`,
+      agentText.searchSenderKeyword(locale, senderHint),
+    )
+    addCandidate(senderHint, agentText.searchKeyword(locale, senderHint))
   }
 
   quotedPhrases.forEach((phrase) => {
-    addCandidate(`subject:"${escapeQuotedValue(phrase)}"`, `按主题 ${phrase} 搜索`)
-    addCandidate(`"${escapeQuotedValue(phrase)}"`, `按短语 ${phrase} 搜索`)
+    addCandidate(
+      `subject:"${escapeQuotedValue(phrase)}"`,
+      agentText.searchSubject(locale, phrase),
+    )
+    addCandidate(`"${escapeQuotedValue(phrase)}"`, agentText.searchPhrase(locale, phrase))
   })
 
   if (keywordHints.length > 0) {
     keywordHints.forEach((keyword) => {
-      addCandidate(keyword, `按关键词 ${keyword} 搜索`)
+      addCandidate(keyword, agentText.searchKeyword(locale, keyword))
     })
-    addCandidate(keywordHints.join(' '), `按关键词 ${keywordHints.join(' / ')} 搜索`)
+    addCandidate(
+      keywordHints.join(' '),
+      agentText.searchKeyword(locale, keywordHints.join(' / ')),
+    )
   }
 
   if (!senderHint && !preferredQuery && keywordHints.length === 0) {
     const normalized = normalizeSearchQuery(context)
     if (normalized) {
-      addCandidate(normalized, '按请求中的关键词搜索')
+      addCandidate(normalized, agentText.searchRequestKeywords(locale))
     }
   }
 
@@ -460,10 +483,12 @@ export class AgentService {
   async handleMessage(input: {
     session: AuthSession
     message: string
+    locale?: AgentLocale
     history?: AgentMessage[]
     pendingAction?: AgentPendingAction
   }): Promise<AgentResponse> {
     const trimmedMessage = input.message.trim()
+    const locale = normalizeAgentLocale(input.locale)
 
     if (!trimmedMessage) {
       throw new Error('Message is required.')
@@ -477,28 +502,29 @@ export class AgentService {
       )
 
       if (pendingReplyIntent === 'send') {
-        return this.sendPendingReply(input.session, input.pendingAction)
+        return this.sendPendingReply(input.session, input.pendingAction, locale)
       }
 
       if (pendingReplyIntent === 'hold') {
-        return this.holdPendingReply(input.pendingAction)
+        return this.holdPendingReply(input.pendingAction, locale)
       }
 
-      return this.revisePendingReply(input.session, trimmedMessage, input.pendingAction)
+      return this.revisePendingReply(input.session, trimmedMessage, input.pendingAction, locale)
     }
 
-    return this.runMailAgent(input.session, trimmedMessage, input.history)
+    return this.runMailAgent(input.session, trimmedMessage, input.history, locale)
   }
 
   private async runMailAgent(
     session: AuthSession,
     message: string,
     history?: AgentMessage[],
+    locale: AgentLocale = 'zh-CN',
   ): Promise<AgentResponse> {
     const toolResults: ToolExecutionResult[] = []
 
     for (let step = 0; step < MAX_TOOL_STEPS; step += 1) {
-      const plannerResponse = await this.planNextAction(message, history, toolResults)
+      const plannerResponse = await this.planNextAction(message, history, toolResults, locale)
 
       if (!plannerResponse) {
         break
@@ -513,6 +539,7 @@ export class AgentService {
           plannerResponse.tool === 'search_emails'
             ? await this.executeSearchWithFallback(
                 session,
+                locale,
                 message,
                 history,
                 plannerResponse.arguments,
@@ -526,16 +553,17 @@ export class AgentService {
         continue
       }
 
-      return this.buildFinalResponse(plannerResponse, toolResults)
+      return this.buildFinalResponse(plannerResponse, toolResults, locale)
     }
 
-    return this.fallbackResponse(session, message, history)
+    return this.fallbackResponse(session, message, history, locale)
   }
 
   private async planNextAction(
     message: string,
     history: AgentMessage[] | undefined,
     toolResults: ToolExecutionResult[],
+    locale: AgentLocale,
   ): Promise<PlannerResponse | null> {
     const response = await aiService.complete({
       system: `You are a mail agent. You may call tools to inspect email before answering.
@@ -551,8 +579,9 @@ Rules:
 - When using search_emails, never pass the entire user sentence as the query. Prefer sender names, email addresses, subject words, or Gmail operators.
 - Never call send_email unless the user explicitly confirms sending.
 - Once you have enough context, return a final response.
+- The values in "threadTitle", "intro", "summary", and "prompt" must be written in ${agentText.plannerLanguageLabel(locale)}.
 - Final response JSON shape:
-{"type":"final","threadTitle":"short title","intro":"brief intro in Chinese","summary":"Chinese email summary","prompt":"Chinese follow-up prompt","replyDraft":{"to":"recipient","subject":"subject line","body":"reply body"}}
+{"type":"final","threadTitle":"short title","intro":"localized intro","summary":"localized email summary","prompt":"localized follow-up prompt","replyDraft":{"to":"recipient","subject":"subject line","body":"reply body"}}
 - Tool call JSON shape:
 {"type":"tool","tool":"search_emails|read_email|list_account_emails|send_email","arguments":{...}}`,
       prompt: `Conversation history:
@@ -574,6 +603,7 @@ Return the next JSON action now.`,
 
   private async executeSearchWithFallback(
     session: AuthSession,
+    locale: AgentLocale,
     message: string,
     history: AgentMessage[] | undefined,
     argumentsValue: Record<string, unknown> | undefined,
@@ -584,7 +614,7 @@ Return the next JSON action now.`,
       typeof argumentsValue?.limit === 'number' && argumentsValue.limit > 0
         ? argumentsValue.limit
         : 5
-    const candidates = buildSearchCandidates(message, history, preferredQuery)
+    const candidates = buildSearchCandidates(locale, message, history, preferredQuery)
     const attemptedQueries: string[] = []
 
     for (const candidate of candidates) {
@@ -608,7 +638,8 @@ Return the next JSON action now.`,
     }
 
     const failedDetail =
-      candidates.map((item) => item.detail).join('，然后') || '按关键词搜索'
+      candidates.map((item) => item.detail).join(agentText.searchThen(locale)) ||
+      agentText.searchGeneric(locale)
 
     return {
       tool: 'search_emails',
@@ -675,6 +706,7 @@ Return the JSON intent now.`,
   private buildFinalResponse(
     plannerResponse: PlannerFinalResponse,
     toolResults: ToolExecutionResult[],
+    locale: AgentLocale,
   ): AgentResponse {
     const searchResult = getLastToolResult(toolResults, 'search_emails')
     const searchOutput = (searchResult?.output ?? {}) as {
@@ -708,7 +740,9 @@ Return the JSON intent now.`,
         type: 'email_list',
         title:
           plannerResponse.summary?.trim() ||
-          `以下是您最新的 ${searchOutput.emails.length} 封邮件`,
+          (isEnglishLocale(locale)
+            ? `Here are your latest ${searchOutput.emails.length} emails`
+            : `以下是您最新的 ${searchOutput.emails.length} 封邮件`),
         emails: searchOutput.emails.slice(0, 5),
       })
     }
@@ -754,15 +788,15 @@ Return the JSON intent now.`,
     }
 
     return {
-      threadTitle: buildThreadTitle(plannerResponse.threadTitle || readOutput.subject),
-      intro: plannerResponse.intro?.trim() || '我已经根据你的要求处理了这封邮件。',
+      threadTitle: buildThreadTitle(plannerResponse.threadTitle || readOutput.subject) || agentText.defaultThreadTitle(locale),
+      intro: plannerResponse.intro?.trim() || agentText.processedEmail(locale),
       steps,
       artifacts,
       prompt:
         plannerResponse.prompt?.trim() ||
         (pendingAction
-          ? '如果你确认没问题，我就直接帮你发送；如果还要改，继续告诉我。'
-          : '如果你还要继续处理其他邮件，直接告诉我。'),
+          ? agentText.pendingPrompt(locale)
+          : agentText.continuePrompt(locale)),
       ...(pendingAction ? { pendingAction } : {}),
     }
   }
@@ -770,6 +804,7 @@ Return the JSON intent now.`,
   private async sendPendingReply(
     session: AuthSession,
     pendingAction: AgentPendingAction,
+    locale: AgentLocale,
   ): Promise<AgentResponse> {
     const accountResult = await mailToolsService.execute(session, 'list_account_emails', {})
     const sendResult = await mailToolsService.execute(session, 'send_email', {
@@ -781,7 +816,7 @@ Return the JSON intent now.`,
 
     return {
       threadTitle: buildThreadTitle(pendingAction.draft.subject),
-      intro: '好的，我来发送这封回复。',
+      intro: agentText.sendIntro(locale),
       steps: [
         {
           label: accountResult.label,
@@ -803,19 +838,22 @@ Return the JSON intent now.`,
           sentMessageId: String(sendResult.output.sentMessageId),
         },
       ],
-      prompt: '如果对方回复了，随时告诉我，我可以继续帮你处理后续邮件。',
+      prompt: agentText.sendPrompt(locale),
     }
   }
 
-  private holdPendingReply(pendingAction: AgentPendingAction): AgentResponse {
+  private holdPendingReply(
+    pendingAction: AgentPendingAction,
+    locale: AgentLocale,
+  ): AgentResponse {
     return {
       threadTitle: buildThreadTitle(pendingAction.draft.subject),
-      intro: '我先不发送，继续保留这版草稿。',
+      intro: agentText.holdIntro(locale),
       steps: [
         {
           label: 'Await Confirmation',
           status: 'completed',
-          detail: 'Waiting for clearer send or revise intent',
+          detail: agentText.holdDetail(locale),
         },
       ],
       artifacts: [
@@ -826,7 +864,7 @@ Return the JSON intent now.`,
           body: pendingAction.draft.body,
         },
       ],
-      prompt: '如果你想直接发，告诉我“发吧”或“就这样发送”；如果要改，直接说你想怎么改。',
+      prompt: agentText.holdPrompt(locale),
       pendingAction,
     }
   }
@@ -835,6 +873,7 @@ Return the JSON intent now.`,
     session: AuthSession,
     revisionRequest: string,
     pendingAction: AgentPendingAction,
+    locale: AgentLocale,
   ): Promise<AgentResponse> {
     const readResult = await mailToolsService.execute(session, 'read_email', {
       emailId: pendingAction.emailId,
@@ -863,7 +902,7 @@ Return the JSON intent now.`,
 
     return {
       threadTitle: buildThreadTitle(readOutput.subject || nextDraft.subject),
-      intro: '我已经按你的要求改了一版回复。',
+      intro: agentText.reviseIntro(locale),
       steps: [
         {
           label: 'Read Email',
@@ -884,7 +923,7 @@ Return the JSON intent now.`,
           body: nextDraft.body,
         },
       ],
-      prompt: '如果这版可以，我就直接帮你发送；如果还要改，继续告诉我想怎么调整。',
+      prompt: agentText.revisePrompt(locale),
       pendingAction: {
         type: 'send_reply',
         emailId: pendingAction.emailId,
@@ -897,9 +936,11 @@ Return the JSON intent now.`,
     session: AuthSession,
     message: string,
     history?: AgentMessage[],
+    locale: AgentLocale = 'zh-CN',
   ): Promise<AgentResponse> {
     const searchResult = await this.executeSearchWithFallback(
       session,
+      locale,
       message,
       history,
       {
@@ -914,13 +955,9 @@ Return the JSON intent now.`,
     const firstEmail = searchOutput.emails?.[0]
 
     if (!firstEmail) {
-      const triedLabels = searchResult.detail
-        ? `我先${searchResult.detail}，但目前还没搜到明显匹配的邮件。`
-        : '我先帮你搜了一轮，但目前还没搜到明显匹配的邮件。'
-
       return {
-        threadTitle: DEFAULT_THREAD_TITLE,
-        intro: triedLabels,
+        threadTitle: agentText.defaultThreadTitle(locale),
+        intro: agentText.notFoundIntro(locale, searchResult.detail),
         steps: [
           {
             label: searchResult.label,
@@ -929,7 +966,7 @@ Return the JSON intent now.`,
           },
         ],
         artifacts: [],
-        prompt: '你可以继续给我发件邮箱、主题词，或者告诉我大概是什么时候收到的，我再往下搜。',
+        prompt: agentText.notFoundPrompt(locale),
       }
     }
 
@@ -963,7 +1000,7 @@ Return the JSON intent now.`,
 
     return {
       threadTitle: buildThreadTitle(readOutput.subject),
-      intro: `我来帮你查找 ${readOutput.from} 发给你的邮件。`,
+      intro: agentText.foundSenderIntro(locale, readOutput.from),
       steps: [
         {
           label: searchResult.label,
@@ -991,7 +1028,7 @@ Return the JSON intent now.`,
           body: draftBody,
         },
       ],
-      prompt: '你希望我直接发送这封回复，还是需要修改内容？',
+      prompt: agentText.sendOrEditPrompt(locale),
       pendingAction: {
         type: 'send_reply',
         emailId: readOutput.id,

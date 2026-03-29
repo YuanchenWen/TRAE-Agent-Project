@@ -4,6 +4,7 @@ import type {
   ApiEnvelope,
 } from '@/features/mail/types'
 import type {
+  AgentLocale,
   AgentHistoryMessage,
   AgentPendingAction,
   AgentResponse,
@@ -69,6 +70,7 @@ export const agentApi = {
 
   sendMessage(payload: {
     message: string
+    locale?: AgentLocale
     history?: AgentHistoryMessage[]
     pendingAction?: AgentPendingAction
   }): Promise<AgentResponse> {

@@ -2,10 +2,13 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react'
 import { agentApi } from '../api'
+import { useAgentI18n } from '../i18n'
 import type {
+  AgentLocale,
   AgentHistoryMessage,
   AgentPendingAction,
   AgentViewState,
@@ -13,12 +16,13 @@ import type {
 } from '../types'
 import type { AuthSession } from '@/features/mail/types'
 
-const INITIAL_TITLE = 'Mail Agent'
-
 const createId = (): string =>
   `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
-const getRedirectFlashMessage = (): string => {
+const getRedirectFlashMessage = (
+  _locale: AgentLocale,
+  t: ReturnType<typeof useAgentI18n>['t'],
+): string => {
   const params = new URLSearchParams(window.location.search)
   const gmailStatus = params.get('gmail')
   const message = params.get('message')
@@ -30,11 +34,11 @@ const getRedirectFlashMessage = (): string => {
   window.history.replaceState({}, document.title, window.location.pathname)
 
   if (gmailStatus === 'connected') {
-    return 'Gmail connected successfully.'
+    return t('flash.gmailConnected')
   }
 
   if (gmailStatus === 'error') {
-    return message || 'Gmail authorization failed.'
+    return message || t('flash.gmailAuthorizationFailed')
   }
 
   return ''
@@ -48,20 +52,24 @@ const historyFromMessages = (messages: ChatMessage[]): AgentHistoryMessage[] =>
       content: message.content,
     }))
 
-const initialAssistantMessage: ChatMessage = {
-  id: createId(),
-  role: 'assistant',
-  content:
-    '把邮件相关需求直接发给我，比如“查一下谁给我发了 team request，然后先起草一个回复”。我会按 agent 的方式帮你查找、阅读、总结、起草并在确认后发送。',
-}
-
 export function useAgentChat(): AgentViewState {
+  const { locale, t } = useAgentI18n()
+  const initialTitle = t('thread.defaultTitle')
+  const initialAssistantMessage = useMemo<ChatMessage>(
+    () => ({
+      id: 'assistant-welcome',
+      role: 'assistant',
+      content: t('assistant.welcome'),
+    }),
+    [t],
+  )
+  const previousInitialTitleRef = useRef(initialTitle)
   const [authLoading, setAuthLoading] = useState(true)
   const [session, setSession] = useState<AuthSession | null>(null)
   const [flashMessage, setFlashMessage] = useState('')
-  const [threadTitle, setThreadTitle] = useState(INITIAL_TITLE)
+  const [threadTitle, setThreadTitle] = useState(initialTitle)
   const [composerValue, setComposerValue] = useState('')
-  const [messages, setMessages] = useState<ChatMessage[]>([initialAssistantMessage])
+  const [messages, setMessages] = useState<ChatMessage[]>(() => [initialAssistantMessage])
   const [sending, setSending] = useState(false)
   const [pendingAction, setPendingAction] = useState<AgentPendingAction | undefined>()
   const [bridgeStatus, setBridgeStatus] = useState<AgentViewState['bridgeStatus']>(null)
@@ -69,7 +77,21 @@ export function useAgentChat(): AgentViewState {
   const [activatingAgentSession, setActivatingAgentSession] = useState(false)
 
   useEffect(() => {
-    setFlashMessage(getRedirectFlashMessage())
+    setMessages((current) =>
+      current.length === 1 && current[0]?.id === 'assistant-welcome'
+        ? [{ ...current[0], content: t('assistant.welcome') }]
+        : current,
+    )
+
+    setThreadTitle((current) =>
+      current === previousInitialTitleRef.current ? initialTitle : current,
+    )
+
+    previousInitialTitleRef.current = initialTitle
+  }, [initialTitle, t])
+
+  useEffect(() => {
+    setFlashMessage(getRedirectFlashMessage(locale, t))
 
     void (async () => {
       setAuthLoading(true)
@@ -89,9 +111,9 @@ export function useAgentChat(): AgentViewState {
         setAuthLoading(false)
       }
     })()
-  }, [])
+  }, [locale, t])
 
-  const connectGmail = async () => {
+  const connectGmail = useCallback(async () => {
     try {
       const payload = await agentApi.initOAuth()
       window.location.href = payload.authUrl
@@ -99,21 +121,21 @@ export function useAgentChat(): AgentViewState {
       setFlashMessage(
         error instanceof Error
           ? error.message
-          : 'Backend is unavailable. Make sure the API server is running.',
+          : t('flash.backendUnavailable'),
       )
     }
-  }
+  }, [t])
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     await agentApi.logout()
     setSession(null)
-    setThreadTitle(INITIAL_TITLE)
+    setThreadTitle(initialTitle)
     setMessages([initialAssistantMessage])
     setPendingAction(undefined)
     setComposerValue('')
-  }
+  }, [initialAssistantMessage, initialTitle])
 
-  const activateAgentSession = async () => {
+  const activateAgentSession = useCallback(async () => {
     setActivatingAgentSession(true)
 
     try {
@@ -121,17 +143,17 @@ export function useAgentChat(): AgentViewState {
       setAgentSessionStatus(status)
       setFlashMessage(
         status.email
-          ? `Agent session activated for ${status.email}.`
-          : 'Agent session activated.',
+          ? t('flash.agentSessionActivatedFor', { email: status.email })
+          : t('flash.agentSessionActivated'),
       )
     } catch (error) {
       setFlashMessage(
-        error instanceof Error ? error.message : 'Failed to activate agent session.',
+        error instanceof Error ? error.message : t('flash.activateAgentSessionFailed'),
       )
     } finally {
       setActivatingAgentSession(false)
     }
-  }
+  }, [t])
 
   const onSubmit = useCallback(async () => {
     const message = composerValue.trim()
@@ -150,7 +172,7 @@ export function useAgentChat(): AgentViewState {
     const loadingMessage: ChatMessage = {
       id: loadingMessageId,
       role: 'assistant',
-      content: pendingAction ? '正在处理你的确认或修改请求…' : '正在分析邮件任务并执行工具步骤…',
+      content: pendingAction ? t('assistant.loadingPending') : t('assistant.loadingTask'),
       loading: true,
     }
 
@@ -163,6 +185,7 @@ export function useAgentChat(): AgentViewState {
     try {
       const response = await agentApi.sendMessage({
         message,
+        locale,
         history: historyFromMessages(nextHistoryMessages),
         pendingAction,
       })
@@ -191,7 +214,7 @@ export function useAgentChat(): AgentViewState {
                 content:
                   error instanceof Error
                     ? error.message
-                    : 'Agent request failed.',
+                    : t('assistant.requestFailed'),
               }
             : item,
         ),
@@ -199,7 +222,7 @@ export function useAgentChat(): AgentViewState {
     } finally {
       setSending(false)
     }
-  }, [composerValue, messages, pendingAction, sending, session])
+  }, [composerValue, locale, messages, pendingAction, sending, session, t])
 
   return useMemo(
     () => ({
@@ -226,6 +249,9 @@ export function useAgentChat(): AgentViewState {
       bridgeStatus,
       composerValue,
       flashMessage,
+      activateAgentSession,
+      connectGmail,
+      logout,
       messages,
       onSubmit,
       sending,

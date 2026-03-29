@@ -1,5 +1,7 @@
 import type { AuthSession } from '@/features/mail/types'
 
+export type AgentLocale = 'zh-CN' | 'en-US'
+
 export type AgentToolStatus = 'completed' | 'failed'
 
 export interface AgentToolStep {

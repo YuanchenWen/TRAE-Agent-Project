@@ -3,6 +3,7 @@ import { authMiddleware } from '../middleware'
 import { type AuthSession } from '../services/auth.service'
 import {
   agentService,
+  type AgentLocale,
   type AgentMessage,
   type AgentPendingAction,
 } from '../services/agent.service'
@@ -18,6 +19,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const body = req.body as {
       message?: unknown
+      locale?: unknown
       history?: unknown
       pendingAction?: unknown
     }
@@ -47,6 +49,10 @@ router.post(
     const result = await agentService.handleMessage({
       session,
       message: body.message.trim(),
+      locale:
+        body.locale === 'en-US' || body.locale === 'zh-CN'
+          ? (body.locale as AgentLocale)
+          : undefined,
       history,
       pendingAction,
     })

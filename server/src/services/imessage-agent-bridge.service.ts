@@ -16,6 +16,14 @@ interface ConversationState {
 
 const MAX_HISTORY_MESSAGES = 12
 const IMESSAGE_DB_PATH = path.join(os.homedir(), 'Library', 'Messages', 'chat.db')
+const MAX_SMS_SUMMARY_SENTENCES = 5
+const MAX_SMS_LIST_SENTENCES = 2
+const SMS_DATE_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
+  month: 'numeric',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+})
 
 const normalizeIncomingText = (message: string, triggerPrefix: string): string =>
   message.startsWith(triggerPrefix)
@@ -28,6 +36,37 @@ const hasTriggerPrefix = (message: string, triggerPrefix: string): boolean =>
 const appendHistory = (history: AgentMessage[], next: AgentMessage): AgentMessage[] =>
   [...history, next].slice(-MAX_HISTORY_MESSAGES)
 
+const normalizeSmsText = (value: string): string =>
+  value
+    .replace(/\*\*/g, '')
+    .replace(/^[*-]\s*/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+const truncateToSentences = (value: string, maxSentences: number): string => {
+  const normalizedValue = normalizeSmsText(value)
+
+  if (!normalizedValue) {
+    return '暂无摘要'
+  }
+
+  const sentences =
+    normalizedValue.match(/[^。！？!?]+[。！？!?]?/g)?.map((item) => item.trim()).filter(Boolean) ??
+    [normalizedValue]
+
+  return sentences.slice(0, maxSentences).join(' ')
+}
+
+const formatSmsDate = (value: string): string => {
+  const parsedDate = new Date(value)
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return value
+  }
+
+  return SMS_DATE_FORMATTER.format(parsedDate)
+}
+
 const renderArtifact = (artifact: AgentResponse['artifacts'][number]): string => {
   if (artifact.type === 'email_list') {
     return [
@@ -36,60 +75,50 @@ const renderArtifact = (artifact: AgentResponse['artifacts'][number]): string =>
       artifact.emails
         .map(
           (email, index) =>
-            `${index + 1}. ${email.subject}\n发件人：${email.from}\n时间：${email.date}\n摘要：${email.snippet || '暂无摘要'}`,
+            `${index + 1}. 发件人：${email.from}\n主题：${email.subject}\n摘要：${truncateToSentences(email.snippet || '', MAX_SMS_LIST_SENTENCES)}\n时间：${formatSmsDate(email.date)}`,
         )
         .join('\n\n'),
     ].join('\n')
   }
 
   if (artifact.type === 'email_summary') {
-    const bullets = artifact.bullets.length
-      ? `\n${artifact.bullets.map((bullet) => `- ${bullet}`).join('\n')}`
-      : ''
-
+    const combinedSummary = [artifact.summary, ...artifact.bullets].join(' ')
     return [
       `发件人：${artifact.from}`,
       `主题：${artifact.subject}`,
-      '',
-      '邮件摘要：',
-      artifact.summary,
-      bullets,
-    ]
-      .filter(Boolean)
-      .join('\n')
+      `摘要：${truncateToSentences(combinedSummary, MAX_SMS_SUMMARY_SENTENCES)}`,
+    ].join('\n')
   }
 
   if (artifact.type === 'reply_draft') {
     return [
-      `Subject: ${artifact.subject}`,
-      '',
-      artifact.body,
+      '我已经起草好一封回复。',
+      `主题：${artifact.subject}`,
+      `草稿摘要：${truncateToSentences(artifact.body, MAX_SMS_SUMMARY_SENTENCES)}`,
     ].join('\n')
   }
 
   return [
-    '回复已发送成功。',
-    `发送至：${artifact.to}`,
-    `发件账号：${artifact.from}`,
+    '回复已发送成功',
+    `收件人：${artifact.to}`,
     `主题：${artifact.subject}`,
-    `消息 ID：${artifact.sentMessageId}`,
   ].join('\n')
 }
 
 const renderAgentResponse = (response: AgentResponse): string => {
-  const parts: string[] = [response.intro]
-
-  if (response.steps.length > 0) {
-    parts.push(
-      response.steps.map((step) => `[${step.label}] ${step.detail ?? step.status}`).join('\n'),
-    )
-  }
+  const parts: string[] = []
 
   if (response.artifacts.length > 0) {
     parts.push(response.artifacts.map(renderArtifact).join('\n\n'))
+  } else {
+    parts.push(response.intro)
   }
 
-  parts.push(response.prompt)
+  if (response.pendingAction?.type === 'send_reply') {
+    parts.push('如果你想直接发送，回复“发送”就可以；如果要改，直接告诉我怎么改。')
+  } else if (response.artifacts.some((artifact) => artifact.type === 'email_list')) {
+    parts.push('告诉我你想看哪一封，我继续帮你读。')
+  }
 
   return parts.filter(Boolean).join('\n\n')
 }
@@ -238,6 +267,7 @@ export class IMessageAgentBridgeService {
     const response = await agentService.handleMessage({
       session,
       message: userText,
+      locale: 'zh-CN',
       history: state.history,
       pendingAction: state.pendingAction,
     })
