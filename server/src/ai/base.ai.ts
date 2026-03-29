@@ -9,6 +9,13 @@ import {
 export abstract class AIProvider {
   abstract getProviderName(): string
 
+  abstract complete(options: {
+    system: string
+    prompt: string
+    maxTokens: number
+    temperature?: number
+  }): Promise<string>
+
   abstract summarize(text: string, options?: SummarizeOptions): Promise<string>
   abstract generateReply(context: ReplyContext): Promise<ReplySuggestion>
   abstract analyzeSentiment(text: string): Promise<SentimentResult>

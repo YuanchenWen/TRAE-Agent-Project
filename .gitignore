@@ -15,6 +15,7 @@ server/dist
 .env
 .env.*
 !.env.example
+.agent-data/
 .vercel
 
 # Editor directories and files

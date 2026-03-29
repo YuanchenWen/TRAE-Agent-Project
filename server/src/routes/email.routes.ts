@@ -2,47 +2,49 @@ import {
   Router,
   type Request,
   type Response,
-  type NextFunction,
 } from 'express'
 import { authMiddleware } from '../middleware'
-import { EmailService } from '../services/email.service'
-import { MiniMaxAI } from '../ai/minimax.service'
+import { createEmailService } from '../services/email.service'
 import { type AuthSession } from '../services/auth.service'
 import { type EmailQuery } from '../types/email'
+import { asyncHandler } from '../utils/async-handler'
 import { errorResponse, successResponse } from '../utils/response'
 
 const router = Router()
-const aiProvider = new MiniMaxAI()
-
-const getEmailService = (): EmailService => new EmailService('gmail', aiProvider)
-
-type AsyncRouteHandler = (
-  req: Request,
-  res: Response,
-  next: NextFunction,
-) => Promise<void>
-
-const asyncHandler =
-  (handler: AsyncRouteHandler) =>
-  (req: Request, res: Response, next: NextFunction): void => {
-    void handler(req, res, next).catch(next)
-  }
+const getEmailService = () => createEmailService()
 
 const getSession = (res: Response): AuthSession =>
   res.locals.auth as AuthSession
 
+const parsePositiveNumber = (value: unknown, fallback: number): number => {
+  if (typeof value !== 'string') {
+    return fallback
+  }
+
+  const parsedValue = Number(value)
+
+  return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : fallback
+}
+
+const parseBooleanValue = (value: unknown): boolean | undefined => {
+  if (value === 'true') {
+    return true
+  }
+
+  if (value === 'false') {
+    return false
+  }
+
+  return undefined
+}
+
 const buildQuery = (req: Request): EmailQuery => ({
-  limit:
-    typeof req.query.limit === 'string' && Number.isFinite(Number(req.query.limit))
-      ? Number(req.query.limit)
-      : 20,
+  limit: parsePositiveNumber(req.query.limit, 20),
   search: typeof req.query.search === 'string' ? req.query.search : undefined,
   pageToken:
     typeof req.query.pageToken === 'string' ? req.query.pageToken : undefined,
-  unread:
-    typeof req.query.unread === 'string' ? req.query.unread === 'true' : undefined,
-  starred:
-    typeof req.query.starred === 'string' ? req.query.starred === 'true' : undefined,
+  unread: parseBooleanValue(req.query.unread),
+  starred: parseBooleanValue(req.query.starred),
 })
 
 router.use(authMiddleware)
@@ -80,7 +82,7 @@ router.post(
     }
 
     const result = await emailService.organizeMailbox(session.tokens, {
-      limit: typeof body.limit === 'number' ? body.limit : 12,
+      limit: typeof body.limit === 'number' && body.limit > 0 ? body.limit : 12,
       search: body.search,
       unread: body.unread,
       starred: body.starred,

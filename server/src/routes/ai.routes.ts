@@ -1,29 +1,15 @@
 import {
   Router,
-  type Request,
-  type Response,
-  type NextFunction,
 } from 'express'
 import { aiService } from '../services/ai.service'
 import {
   type ReplyContext,
   type SummarizeOptions,
 } from '../types/integration'
+import { asyncHandler } from '../utils/async-handler'
 import { errorResponse, successResponse } from '../utils/response'
 
 const router = Router()
-
-type AsyncRouteHandler = (
-  req: Request,
-  res: Response,
-  next: NextFunction,
-) => Promise<void>
-
-const asyncHandler =
-  (handler: AsyncRouteHandler) =>
-  (req: Request, res: Response, next: NextFunction): void => {
-    void handler(req, res, next).catch(next)
-  }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null

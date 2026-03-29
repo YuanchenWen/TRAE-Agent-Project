@@ -1,25 +1,12 @@
 import {
   Router,
-  type Request,
-  type Response,
-  type NextFunction,
 } from 'express'
 import { authService } from '../services/auth.service'
+import { agentSessionService } from '../services/agent-session.service'
+import { asyncHandler } from '../utils/async-handler'
 import { errorResponse, successResponse } from '../utils/response'
 
 const router = Router()
-
-type AsyncRouteHandler = (
-  req: Request,
-  res: Response,
-  next: NextFunction,
-) => Promise<void>
-
-const asyncHandler =
-  (handler: AsyncRouteHandler) =>
-  (req: Request, res: Response, next: NextFunction): void => {
-    void handler(req, res, next).catch(next)
-  }
 
 router.get(
   '/gmail/connect',
@@ -83,6 +70,50 @@ router.get(
     }
 
     successResponse(res, session, 'Current Gmail session')
+  }),
+)
+
+router.get(
+  '/agent-session',
+  asyncHandler(async (_req, res) => {
+    const status = await agentSessionService.getStatus()
+    successResponse(res, status, 'Agent session status')
+  }),
+)
+
+router.post(
+  '/agent-session/activate',
+  asyncHandler(async (req, res) => {
+    const { session, setCookie } = await authService.loadSession(req)
+
+    if (!session) {
+      errorResponse(res, 'Connect Gmail in the browser before activating the agent session.', 401)
+      return
+    }
+
+    await agentSessionService.save(session)
+
+    if (setCookie) {
+      res.setHeader('Set-Cookie', setCookie)
+    }
+
+    successResponse(
+      res,
+      {
+        active: true,
+        email: session.user.email,
+        provider: session.provider,
+      },
+      'Agent session activated',
+    )
+  }),
+)
+
+router.delete(
+  '/agent-session',
+  asyncHandler(async (_req, res) => {
+    await agentSessionService.clear()
+    successResponse(res, { active: false }, 'Agent session cleared')
   }),
 )
 

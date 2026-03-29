@@ -1,9 +1,14 @@
-import { IntegrationRegistry } from '../integrations/registry';
-import { GmailIntegration } from '../integrations/gmail.integration';
+import { IntegrationRegistry } from '../integrations/registry'
+import { GmailIntegration } from '../integrations/gmail.integration'
 
-export const registerIntegrations = () => {
-  const registry = IntegrationRegistry.getInstance();
-  registry.register(new GmailIntegration());
-  // Register other integrations here
-  console.log("Integrations registered.");
-};
+let integrationsRegistered = false
+
+export const registerIntegrations = (): void => {
+  if (integrationsRegistered) {
+    return
+  }
+
+  const registry = IntegrationRegistry.getInstance()
+  registry.register(new GmailIntegration())
+  integrationsRegistered = true
+}

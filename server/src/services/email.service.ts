@@ -1,6 +1,8 @@
 import { BaseIntegration } from '../integrations/base.integration'
 import { IntegrationRegistry } from '../integrations/registry'
 import { AIProvider } from '../ai/base.ai'
+import { miniMaxAI } from '../ai/provider'
+import { registerIntegrations } from '../config/integrations'
 import {
   AuthTokens,
   EmailQuery,
@@ -9,11 +11,39 @@ import {
 } from '../types/email'
 import { ReplyContext } from '../types/integration'
 
+const MAX_EMAIL_BODY_CHARS = 1800
+
+const stripHtml = (value: string): string =>
+  value
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+const trimForPrompt = (value: string, maxChars: number): string =>
+  value.length <= maxChars ? value : `${value.slice(0, maxChars).trimEnd()}...`
+
+const getEmailAiContent = (email: Email): string =>
+  email.body?.plain?.trim() || stripHtml(email.body?.html ?? '')
+
+const getReplyRecipient = (email: Email): string =>
+  email.replyTo?.[0]?.email ?? email.from.email
+
+const getReplySubject = (subject: string): string =>
+  subject.toLowerCase().startsWith('re:') ? subject : `Re: ${subject}`
+
 export class EmailService {
   private readonly integration: BaseIntegration
   private readonly aiProvider: AIProvider
 
-  constructor(integrationId: string, aiProvider: AIProvider) {
+  constructor(integrationId: string = 'gmail', aiProvider: AIProvider = miniMaxAI) {
+    registerIntegrations()
+
     const integration = IntegrationRegistry.getInstance().get(integrationId)
 
     if (!integration) {
@@ -34,10 +64,13 @@ export class EmailService {
 
   async summarizeMail(tokens: AuthTokens, emailId: string) {
     const email = await this.integration.getEmail(tokens, emailId)
-    if (!email || !email.body?.plain) {
-      throw new Error('Email not found or no plain text body for summarization.')
+    const content = email ? getEmailAiContent(email) : ''
+
+    if (!email || !content) {
+      throw new Error('Email not found or no readable body for summarization.')
     }
-    const summary = await this.aiProvider.summarize(email.body.plain)
+
+    const summary = await this.aiProvider.summarize(content)
     return { summary, keyPoints: [] }
   }
 
@@ -47,11 +80,14 @@ export class EmailService {
     options: Pick<ReplyContext, 'desiredTone' | 'desiredLength'>,
   ) {
     const email = await this.integration.getEmail(tokens, emailId)
-    if (!email || !email.body?.plain) {
-      throw new Error('Email not found or no plain text body for reply generation.')
+    const content = email ? getEmailAiContent(email) : ''
+
+    if (!email || !content) {
+      throw new Error('Email not found or no readable body for reply generation.')
     }
+
     const replyContext: ReplyContext = {
-      originalEmailBody: email.body.plain,
+      originalEmailBody: content,
       originalSubject: email.subject,
       desiredTone: options.desiredTone,
       desiredLength: options.desiredLength,
@@ -60,8 +96,11 @@ export class EmailService {
     return {
       replyDraft: {
         ...replyDraft,
-        to: email.replyTo?.[0]?.email ?? email.from.email,
-        subject: replyDraft.subject === 'Re:' ? `Re: ${email.subject}` : replyDraft.subject,
+        to: getReplyRecipient(email),
+        subject:
+          replyDraft.subject === 'Re:'
+            ? getReplySubject(email.subject)
+            : replyDraft.subject,
       },
     }
   }
@@ -78,8 +117,8 @@ export class EmailService {
 
     const sendResult = await this.integration.sendEmail(
       tokens,
-      replyContent.to || email.replyTo?.[0]?.email || email.from.email,
-      replyContent.subject || `Re: ${email.subject}`,
+      replyContent.to || getReplyRecipient(email),
+      replyContent.subject || getReplySubject(email.subject),
       replyContent.body,
       {
         threadId: email.threadId,
@@ -125,7 +164,7 @@ Subject: ${email.subject}
 Date: ${email.date}
 Snippet: ${email.snippet}
 Body:
-${email.body?.plain ?? email.body?.html ?? '(No body)'}
+${trimForPrompt(getEmailAiContent(email) || '(No body)', MAX_EMAIL_BODY_CHARS)}
 `,
       )
       .join('\n---\n')
@@ -144,3 +183,6 @@ ${email.body?.plain ?? email.body?.html ?? '(No body)'}
     }
   }
 }
+
+export const createEmailService = (integrationId: string = 'gmail'): EmailService =>
+  new EmailService(integrationId, miniMaxAI)

@@ -71,6 +71,15 @@ export class MiniMaxAI extends AIProvider {
     return 'MiniMax'
   }
 
+  async complete(options: {
+    system: string
+    prompt: string
+    maxTokens: number
+    temperature?: number
+  }): Promise<string> {
+    return this.createTextCompletion(options)
+  }
+
   async summarize(text: string, options?: SummarizeOptions): Promise<string> {
     const formatInstruction =
       options?.format === 'bullet'

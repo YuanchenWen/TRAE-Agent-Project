@@ -1,5 +1,5 @@
 import { AIProvider } from '../ai/base.ai'
-import { MiniMaxAI } from '../ai/minimax.service'
+import { miniMaxAI } from '../ai/provider'
 import {
   SummarizeOptions,
   ReplyContext,
@@ -9,10 +9,19 @@ import {
 import { ReplySuggestion } from '../types/email'
 
 export class AIService {
-  constructor(private readonly aiProvider: AIProvider = new MiniMaxAI()) {}
+  constructor(private readonly aiProvider: AIProvider = miniMaxAI) {}
 
   getProviderName(): string {
     return this.aiProvider.getProviderName()
+  }
+
+  async complete(options: {
+    system: string
+    prompt: string
+    maxTokens: number
+    temperature?: number
+  }): Promise<string> {
+    return this.aiProvider.complete(options)
   }
 
   async summarize(text: string, options?: SummarizeOptions): Promise<string> {

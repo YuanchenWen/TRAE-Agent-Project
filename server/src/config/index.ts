@@ -49,4 +49,19 @@ export const config = {
     model: getEnv('MINIMAX_MODEL') ?? getEnv('ANTHROPIC_MODEL') ?? 'MiniMax-M2.7',
     anthropicVersion: '2023-06-01',
   },
+  agent: {
+    sessionFile:
+      getEnv('AGENT_SESSION_FILE') ?? `${process.cwd()}/.agent-data/gmail-session.json`,
+  },
+  imessage: {
+    enabled: getEnv('IMESSAGE_AGENT_ENABLED') === 'true',
+    debug: getEnv('IMESSAGE_AGENT_DEBUG') === 'true',
+    triggerPrefix: getEnv('IMESSAGE_TRIGGER_PREFIX') ?? '@mail',
+    allowedSenders:
+      getEnv('IMESSAGE_ALLOWED_SENDERS')
+        ?.split(',')
+        .map((item) => item.trim())
+        .filter(Boolean) ?? [],
+    pollInterval: toNumber(getEnv('IMESSAGE_POLL_INTERVAL_MS'), 2000),
+  },
 }

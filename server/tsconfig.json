@@ -12,6 +12,6 @@
     "noEmit": true,
     "types": ["node", "express"]
   },
-  "include": ["src/**/*.ts", "../api/**/*.ts"],
+  "include": ["src/**/*.ts", "src/**/*.d.ts", "../api/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }
