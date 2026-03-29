@@ -1,20 +1,20 @@
 # TRAE Agent Project
 
-一个基于 MiniMax 的邮件 Agent 原型。
+A mail agent prototype built on top of MiniMax.
 
-它现在有两条入口：
+It currently has two entry points:
 
-- 本地网页聊天界面
-- Apple iMessage bridge，基于 [`@photon-ai/imessage-kit`](https://github.com/photon-hq/imessage-kit)
+- A local web chat interface
+- An Apple iMessage bridge powered by [`@photon-ai/imessage-kit`](https://github.com/photon-hq/imessage-kit)
 
-Agent 的核心模式不是“固定流程页面”，而是：
+The core interaction model is not a "fixed workflow page," but rather:
 
-1. 用户提出要求
-2. MiniMax 选择并调用邮件工具
-3. 工具读取 / 搜索 / 发送 Gmail 邮件
-4. Agent 汇总结果、起草回复，并在确认后发送
+1. The user makes a request
+2. MiniMax chooses and calls the appropriate mail tools
+3. The tools read / search / send Gmail messages
+4. The agent summarizes the results, drafts a reply, and sends it after confirmation
 
-## 技术栈
+## Tech Stack
 
 - Frontend: Vite + React + TypeScript
 - Backend: Express + TypeScript
@@ -22,20 +22,20 @@ Agent 的核心模式不是“固定流程页面”，而是：
 - Mail tools: Gmail API
 - Message channel: iMessage via `@photon-ai/imessage-kit`
 
-## 当前工具能力
+## Current Tooling Capabilities
 
-当前 agent 使用的是 MCP-style 工具集：
+The current agent uses an MCP-style toolset:
 
 - `search_emails`
 - `read_email`
 - `list_account_emails`
 - `send_email`
 
-MiniMax 会基于用户请求决定何时调用这些工具；发送邮件默认仍然走“先起草，再确认发送”的安全路径。
+MiniMax decides when to call these tools based on the user's request. Sending email still follows the safer "draft first, confirm before sending" path by default.
 
-## 环境变量
+## Environment Variables
 
-复制 `.env.example` 为 `.env`。
+Copy `.env.example` to `.env`.
 
 ### MiniMax
 
@@ -43,7 +43,7 @@ MiniMax 会基于用户请求决定何时调用这些工具；发送邮件默认
 - `MINIMAX_API_BASE_URL`
 - `MINIMAX_MODEL`
 
-也支持 Anthropic 风格兼容变量：
+Anthropic-style compatibility variables are also supported:
 
 - `ANTHROPIC_AUTH_TOKEN`
 - `ANTHROPIC_BASE_URL`
@@ -54,13 +54,13 @@ MiniMax 会基于用户请求决定何时调用这些工具；发送邮件默认
 - `GMAIL_CLIENT_ID`
 - `GMAIL_CLIENT_SECRET`
 - `GMAIL_REDIRECT_URI`
-- `SESSION_SECRET` 或 `JWT_SECRET`
+- `SESSION_SECRET` or `JWT_SECRET`
 
 ### Agent Session
 
 - `AGENT_SESSION_FILE`
 
-这个文件用于把当前网页登录后的 Gmail 会话持久化给后台 agent 使用。iMessage watcher 不会带浏览器 cookie，所以这是必须的。
+This file persists the Gmail session from the current web login so the backend agent can use it. The iMessage watcher does not carry browser cookies, so this is required.
 
 ### iMessage Bridge
 
@@ -70,42 +70,42 @@ MiniMax 会基于用户请求决定何时调用这些工具；发送邮件默认
 - `IMESSAGE_ALLOWED_SENDERS=foo@example.com,+1234567890`
 - `IMESSAGE_POLL_INTERVAL_MS=2000`
 
-## macOS 权限要求
+## macOS Permission Requirements
 
-`imessage-kit` 读取 `~/Library/Messages/chat.db`，所以你必须给运行这个项目的终端或 IDE 开启 **Full Disk Access**。
+`imessage-kit` reads `~/Library/Messages/chat.db`, so you must grant **Full Disk Access** to the terminal or IDE running this project.
 
-路径：
+Path:
 
 `System Settings -> Privacy & Security -> Full Disk Access`
 
-把你实际运行 `npm run dev` 的应用加入进去，例如 Terminal、Warp、iTerm、Cursor 或 VS Code。
+Add the application you actually use to run `npm run dev`, such as Terminal, Warp, iTerm, Cursor, or VS Code.
 
-## 开发启动
+## Development
 
 ```bash
 npm install
 npm run dev
 ```
 
-- Frontend: `http://localhost:5173` 或 Vite 自动切换后的端口
+- Frontend: `http://localhost:5173` or whatever port Vite switches to automatically
 - Backend health: `http://localhost:3001/api/health`
 
-## 首次启用 iMessage Agent
+## Enabling the iMessage Agent for the First Time
 
-1. 启动项目
-2. 打开本地网页并连接 Gmail
-3. 在网页顶部点击 `Activate For iMessage`
-4. 确认 `.env` 中设置了 `IMESSAGE_AGENT_ENABLED=true`
-5. 重启后端
-6. 在 iMessage 中发送类似下面的消息：
+1. Start the project
+2. Open the local web app and connect Gmail
+3. Click `Activate For iMessage` at the top of the page
+4. Make sure `.env` contains `IMESSAGE_AGENT_ENABLED=true`
+5. Restart the backend
+6. Send a message in iMessage like this:
 
 ```text
-@mail 帮我查一下谁给我发了 team request，然后先起草一个回复
+@mail Help me check who sent me a team request, then draft a reply first
 ```
 
-如果当前聊天里已经有待确认草稿，后续回复就不需要再加前缀。
+If there is already a pending draft in the current chat, you do not need to add the prefix again in follow-up replies.
 
-## 相关接口
+## Related Endpoints
 
 ### Gmail / Agent
 
@@ -119,8 +119,8 @@ npm run dev
 
 - `GET /api/imessage/status`
 
-## 说明
+## Notes
 
-- `imessage-kit` 能把 agent 接进系统 iMessage，但它本身不是 Apple 原生 iMessage App Extension。
-- 这意味着它适合做“通过 iMessage 收发消息的 agent”，不适合直接在 Messages.app 里渲染截图里那种自定义 tool card UI。
-- 当前仓库里的网页端承担的是 rich UI / 调试面板角色，iMessage 入口承担的是真实消息渠道角色。
+- `imessage-kit` can connect the agent to the system iMessage channel, but it is not an Apple-native iMessage App Extension.
+- That means it works well for an agent that sends and receives messages through iMessage, but it is not suitable for rendering the kind of custom tool card UI shown in screenshots directly inside Messages.app.
+- In this repository, the web app serves as the rich UI / debugging panel, while the iMessage entry point serves as the real message channel.
