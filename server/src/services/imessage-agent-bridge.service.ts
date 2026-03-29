@@ -29,6 +29,19 @@ const appendHistory = (history: AgentMessage[], next: AgentMessage): AgentMessag
   [...history, next].slice(-MAX_HISTORY_MESSAGES)
 
 const renderArtifact = (artifact: AgentResponse['artifacts'][number]): string => {
+  if (artifact.type === 'email_list') {
+    return [
+      artifact.title,
+      '',
+      artifact.emails
+        .map(
+          (email, index) =>
+            `${index + 1}. ${email.subject}\n发件人：${email.from}\n时间：${email.date}\n摘要：${email.snippet || '暂无摘要'}`,
+        )
+        .join('\n\n'),
+    ].join('\n')
+  }
+
   if (artifact.type === 'email_summary') {
     const bullets = artifact.bullets.length
       ? `\n${artifact.bullets.map((bullet) => `- ${bullet}`).join('\n')}`

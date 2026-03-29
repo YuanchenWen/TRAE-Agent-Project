@@ -87,6 +87,41 @@ function EmailSummaryArtifact({
   )
 }
 
+function EmailListArtifact({
+  artifact,
+}: {
+  artifact: Extract<AgentArtifact, { type: 'email_list' }>
+}) {
+  return (
+    <div className="space-y-4 border-t border-b border-stone-200 py-5">
+      <p className="text-[1.05rem] font-semibold text-stone-900">{artifact.title}</p>
+      <div className="space-y-3">
+        {artifact.emails.map((email, index) => (
+          <div
+            key={email.id}
+            className="rounded-[1rem] border border-stone-200 bg-white px-4 py-4 shadow-[0_8px_20px_rgba(15,23,42,0.04)]"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-stone-500">
+                  {index + 1}. {email.from}
+                </p>
+                <p className="text-[1.02rem] font-semibold text-stone-900">
+                  {email.subject}
+                </p>
+              </div>
+              <span className="shrink-0 text-sm text-stone-400">{email.date}</span>
+            </div>
+            <p className="mt-3 text-[0.98rem] leading-7 text-stone-600">
+              {email.snippet || '暂无摘要'}
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function ReplyDraftArtifact({
   artifact,
 }: {
@@ -148,6 +183,10 @@ function AssistantArtifacts({
   return (
     <div className="space-y-5">
       {response.artifacts.map((artifact, index) => {
+        if (artifact.type === 'email_list') {
+          return <EmailListArtifact key={`list-${index}`} artifact={artifact} />
+        }
+
         if (artifact.type === 'email_summary') {
           return <EmailSummaryArtifact key={`summary-${index}`} artifact={artifact} />
         }

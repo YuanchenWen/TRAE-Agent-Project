@@ -10,6 +10,17 @@ export interface AgentToolStep {
 
 export type AgentArtifact =
   | {
+      type: 'email_list'
+      title: string
+      emails: Array<{
+        id: string
+        from: string
+        subject: string
+        snippet: string
+        date: string
+      }>
+    }
+  | {
       type: 'email_summary'
       from: string
       subject: string

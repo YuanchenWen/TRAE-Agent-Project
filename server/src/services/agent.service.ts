@@ -61,6 +61,17 @@ export interface AgentToolStep {
 
 export type AgentArtifact =
   | {
+      type: 'email_list'
+      title: string
+      emails: Array<{
+        id: string
+        from: string
+        subject: string
+        snippet: string
+        date: string
+      }>
+    }
+  | {
       type: 'email_summary'
       from: string
       subject: string
@@ -665,6 +676,16 @@ Return the JSON intent now.`,
     plannerResponse: PlannerFinalResponse,
     toolResults: ToolExecutionResult[],
   ): AgentResponse {
+    const searchResult = getLastToolResult(toolResults, 'search_emails')
+    const searchOutput = (searchResult?.output ?? {}) as {
+      emails?: Array<{
+        id: string
+        from: string
+        subject: string
+        snippet: string
+        date: string
+      }>
+    }
     const readResult = getLastToolResult(toolResults, 'read_email')
     const readOutput = (readResult?.output ?? {}) as {
       id?: string
@@ -681,6 +702,16 @@ Return the JSON intent now.`,
     }))
 
     const artifacts: AgentArtifact[] = []
+
+    if (!readOutput.id && searchOutput.emails && searchOutput.emails.length > 0) {
+      artifacts.push({
+        type: 'email_list',
+        title:
+          plannerResponse.summary?.trim() ||
+          `以下是您最新的 ${searchOutput.emails.length} 封邮件`,
+        emails: searchOutput.emails.slice(0, 5),
+      })
+    }
 
     if (readOutput.from && readOutput.subject && plannerResponse.summary) {
       artifacts.push({
