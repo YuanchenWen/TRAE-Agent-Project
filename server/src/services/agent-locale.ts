@@ -105,6 +105,18 @@ export const agentText = {
     isEnglishLocale(locale)
       ? 'Do you want me to send this reply now, or should I revise it first?'
       : '你希望我直接发送这封回复，还是需要修改内容？',
+  selectionIntro: (locale: AgentLocale): string =>
+    isEnglishLocale(locale)
+      ? 'I found several relevant emails, but I should not open one at random.'
+      : '我找到了几封相关邮件，但不应该直接随机打开其中一封。',
+  aggregateIntro: (locale: AgentLocale): string =>
+    isEnglishLocale(locale)
+      ? 'I found several relevant emails, but your request spans multiple messages, so I should not summarize a random one as if it answered the whole task.'
+      : '我找到了几封相关邮件，但你的要求涉及多封邮件，我不应该随机读一封就当成整个任务的答案。',
+  selectionPrompt: (locale: AgentLocale): string =>
+    isEnglishLocale(locale)
+      ? 'Tell me which email to open, or narrow it down with the sender, subject, or date range.'
+      : '告诉我你想打开哪一封，或者继续补充发件人、主题词、时间范围。',
   plannerLanguageLabel: (locale: AgentLocale): string =>
     isEnglishLocale(locale) ? 'English' : 'Chinese',
 }

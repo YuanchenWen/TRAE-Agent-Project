@@ -116,6 +116,57 @@ const EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi
 const GMAIL_OPERATOR_PATTERN =
   /\b(from|to|subject|after|before|is|in|label|category|newer_than|older_than|has)\s*:/i
 const COMMON_SEARCH_STOPWORDS = new Set([
+  'a',
+  'an',
+  'and',
+  'any',
+  'are',
+  'as',
+  'at',
+  'by',
+  'detailed',
+  'details',
+  'do',
+  'for',
+  'from',
+  'give',
+  'hello',
+  'help',
+  'i',
+  'in',
+  'inquiry',
+  'into',
+  'is',
+  'it',
+  'mail',
+  'me',
+  'month',
+  'my',
+  'of',
+  'on',
+  'orders',
+  'over',
+  'past',
+  'patterns',
+  'pattern',
+  'please',
+  'provide',
+  'purchasing',
+  'received',
+  'recent',
+  'recently',
+  'show',
+  'summarise',
+  'summarize',
+  'tell',
+  'that',
+  'the',
+  'their',
+  'this',
+  'those',
+  'to',
+  'what',
+  'with',
   '帮我',
   '一下',
   '一下下',
@@ -173,6 +224,20 @@ const safeJsonParse = <T>(value: string): T | null => {
 const trimForPrompt = (value: string, maxChars: number): string =>
   value.length <= maxChars ? value : `${value.slice(0, maxChars).trimEnd()}...`
 
+const dedupeStrings = (values: string[]): string[] => {
+  const seen = new Set<string>()
+
+  return values.filter((value) => {
+    const normalized = value.trim().toLowerCase()
+    if (!normalized || seen.has(normalized)) {
+      return false
+    }
+
+    seen.add(normalized)
+    return true
+  })
+}
+
 const normalizeIntentText = (message: string): string =>
   message
     .trim()
@@ -220,10 +285,24 @@ const getFallbackPendingReplyIntent = (message: string): PendingReplyIntent => {
 }
 
 const extractBullets = (summary: string): string[] =>
-  summary
-    .split('\n')
-    .map((line) => line.replace(/^[-*•]\s*/, '').trim())
-    .filter(Boolean)
+  dedupeStrings(
+    summary
+      .replace(/\*\*(summary|摘要)\*\*\s*[:：]?/giu, '\n')
+      .replace(/\b(summary|摘要)\b\s*[:：]/giu, '\n')
+      .split('\n')
+      .flatMap((line) => line.split(/\s+[—-]\s+/))
+      .map((line) =>
+        line
+          .replace(/\*\*/g, '')
+          .replace(/^[-*•]\s*/, '')
+          .replace(/^(summary|摘要)\s*[:：]?\s*/iu, '')
+          .trim(),
+      )
+      .filter((line) => line.length > 0),
+  )
+
+const cleanSummaryText = (summary: string): string =>
+  extractBullets(summary).join(' ')
 
 const buildThreadTitle = (value: string | undefined): string =>
   value?.trim() || ''
@@ -331,10 +410,73 @@ const extractKeywordHints = (value: string, senderHint: string | null): string[]
     new Set(
       tokens
         .map((token) => token.trim())
-        .filter((token) => token.length >= 2 && !COMMON_SEARCH_STOPWORDS.has(token)),
+        .filter(
+          (token) =>
+            token.length >= 2 && !COMMON_SEARCH_STOPWORDS.has(token.toLowerCase()),
+        ),
     ),
   ).slice(0, 4)
 }
+
+const extractRelativeDateFilter = (value: string): string | null => {
+  if (/(过去|最近)\s*一个?月|上个月|最近一个月/iu.test(value)) {
+    return 'newer_than:30d'
+  }
+
+  if (/\b(past|last)\s+month\b|\bthis\s+month\b/iu.test(value)) {
+    return 'newer_than:30d'
+  }
+
+  if (/(过去|最近)\s*一周|上周|最近一周/iu.test(value)) {
+    return 'newer_than:7d'
+  }
+
+  if (/\b(past|last)\s+week\b|\bthis\s+week\b/iu.test(value)) {
+    return 'newer_than:7d'
+  }
+
+  if (/(过去|最近)\s*一天|昨天|今天/iu.test(value)) {
+    return 'newer_than:1d'
+  }
+
+  if (/\b(past|last)\s+day\b|\btoday\b|\byesterday\b/iu.test(value)) {
+    return 'newer_than:1d'
+  }
+
+  return null
+}
+
+const sanitizePreferredQuery = (value: string): string => {
+  const normalized = normalizeSearchQuery(value)
+
+  if (!normalized) {
+    return ''
+  }
+
+  if (GMAIL_OPERATOR_PATTERN.test(normalized) || EMAIL_PATTERN.test(normalized)) {
+    return normalized
+  }
+
+  const tokens =
+    normalized.match(/[A-Za-z][A-Za-z0-9._-]*|[\u4e00-\u9fff]{2,12}/g)?.filter(
+      (token) => !COMMON_SEARCH_STOPWORDS.has(token.toLowerCase()),
+    ) ?? []
+
+  return dedupeStrings(tokens).slice(0, 4).join(' ')
+}
+
+const requestLooksAggregate = (value: string): boolean =>
+  /\b(pattern|patterns|trend|trends|purchasing|spending|over\s+the\s+past|over\s+past|last\s+month|past\s+month|this\s+month|receipts|orders)\b/iu.test(
+    value,
+  ) ||
+  /(购买|消费|统计|趋势|汇总|总结|分析|过去一个月|最近一个月|订单)/u.test(value)
+
+const hasSpecificReadTarget = (context: string): boolean =>
+  Boolean(
+    extractSenderHint(context) ||
+      extractEmailHints(context).length > 0 ||
+      extractQuotedPhrases(context).length > 0,
+  )
 
 const isConcreteQuery = (value: string): boolean => {
   const normalized = normalizeSearchQuery(value)
@@ -363,6 +505,7 @@ const buildSearchCandidates = (
   const emailHints = extractEmailHints(context)
   const quotedPhrases = extractQuotedPhrases(context)
   const keywordHints = extractKeywordHints(context, senderHint)
+  const relativeDateFilter = extractRelativeDateFilter(context)
   const latestInboxIntent =
     /(最新|最近|latest|recent)/iu.test(context) &&
     /(邮件|邮箱|mail|email)/iu.test(context)
@@ -381,9 +524,11 @@ const buildSearchCandidates = (
     })
   }
 
-  if (preferredQuery && isConcreteQuery(preferredQuery)) {
+  const sanitizedPreferredQuery = preferredQuery ? sanitizePreferredQuery(preferredQuery) : ''
+
+  if (sanitizedPreferredQuery && isConcreteQuery(sanitizedPreferredQuery)) {
     addCandidate(
-      normalizeSearchQuery(preferredQuery),
+      sanitizedPreferredQuery,
       agentText.searchSpecified(locale),
     )
   }
@@ -417,7 +562,19 @@ const buildSearchCandidates = (
   })
 
   if (keywordHints.length > 0) {
+    if (relativeDateFilter) {
+      addCandidate(
+        `${keywordHints.join(' ')} ${relativeDateFilter}`,
+        agentText.searchKeyword(locale, `${keywordHints.join(' / ')} + ${relativeDateFilter}`),
+      )
+    }
     keywordHints.forEach((keyword) => {
+      if (relativeDateFilter) {
+        addCandidate(
+          `${keyword} ${relativeDateFilter}`,
+          agentText.searchKeyword(locale, `${keyword} + ${relativeDateFilter}`),
+        )
+      }
       addCandidate(keyword, agentText.searchKeyword(locale, keyword))
     })
     addCandidate(
@@ -535,6 +692,13 @@ export class AgentService {
           throw new Error('send_email is blocked until the user explicitly confirms sending.')
         }
 
+        if (
+          plannerResponse.tool === 'read_email' &&
+          this.shouldAvoidAutomaticRead(message, history, toolResults)
+        ) {
+          return this.buildSearchSelectionResponse(message, toolResults, locale)
+        }
+
         const result =
           plannerResponse.tool === 'search_emails'
             ? await this.executeSearchWithFallback(
@@ -577,6 +741,7 @@ Rules:
 - Return strict JSON only.
 - Use search_emails before read_email unless a specific emailId is already known.
 - When using search_emails, never pass the entire user sentence as the query. Prefer sender names, email addresses, subject words, or Gmail operators.
+- If search results are broad, ambiguous, or the user asks for trends / patterns across multiple emails, do not read the first result automatically. Return a final response that lists the relevant emails first.
 - Never call send_email unless the user explicitly confirms sending.
 - Once you have enough context, return a final response.
 - The values in "threadTitle", "intro", "summary", and "prompt" must be written in ${agentText.plannerLanguageLabel(locale)}.
@@ -748,11 +913,12 @@ Return the JSON intent now.`,
     }
 
     if (readOutput.from && readOutput.subject && plannerResponse.summary) {
+      const cleanedSummary = cleanSummaryText(plannerResponse.summary)
       artifacts.push({
         type: 'email_summary',
         from: readOutput.from,
         subject: readOutput.subject,
-        summary: plannerResponse.summary,
+        summary: cleanedSummary,
         bullets: extractBullets(plannerResponse.summary),
       })
     }
@@ -949,7 +1115,7 @@ Return the JSON intent now.`,
     )
 
     const searchOutput = searchResult.output as {
-      emails?: Array<{ id: string; subject: string }>
+      emails?: Array<{ id: string; from: string; subject: string; snippet: string; date: string }>
       attemptedQueries?: string[]
     }
     const firstEmail = searchOutput.emails?.[0]
@@ -970,6 +1136,10 @@ Return the JSON intent now.`,
       }
     }
 
+    if (this.shouldAvoidAutomaticRead(message, history, [searchResult])) {
+      return this.buildSearchSelectionResponse(message, [searchResult], locale)
+    }
+
     const readResult = await mailToolsService.execute(session, 'read_email', {
       emailId: firstEmail.id,
     })
@@ -985,6 +1155,7 @@ Return the JSON intent now.`,
       format: 'bullet',
       maxLength: 180,
     })
+    const cleanedSummary = cleanSummaryText(summary)
 
     const draftBody = await aiService.complete({
       system:
@@ -1018,7 +1189,7 @@ Return the JSON intent now.`,
           type: 'email_summary',
           from: readOutput.from,
           subject,
-          summary,
+          summary: cleanedSummary,
           bullets: extractBullets(summary),
         },
         {
@@ -1038,6 +1209,87 @@ Return the JSON intent now.`,
           body: draftBody,
         },
       },
+    }
+  }
+
+  private shouldAvoidAutomaticRead(
+    message: string,
+    history: AgentMessage[] | undefined,
+    toolResults: ToolExecutionResult[],
+  ): boolean {
+    const searchResult = getLastToolResult(toolResults, 'search_emails')
+    const searchOutput = (searchResult?.output ?? {}) as {
+      emails?: Array<{
+        id: string
+        from: string
+        subject: string
+        snippet: string
+        date: string
+      }>
+      total?: number
+    }
+    const emails = searchOutput.emails ?? []
+    const total = Number(searchOutput.total ?? emails.length)
+    const context = buildSearchContext(message, history)
+
+    if (emails.length === 0) {
+      return false
+    }
+
+    if (requestLooksAggregate(context)) {
+      return total > 1
+    }
+
+    if (hasSpecificReadTarget(context)) {
+      return false
+    }
+
+    return total > 1
+  }
+
+  private buildSearchSelectionResponse(
+    message: string,
+    toolResults: ToolExecutionResult[],
+    locale: AgentLocale,
+  ): AgentResponse {
+    const searchResult = getLastToolResult(toolResults, 'search_emails')
+    const searchOutput = (searchResult?.output ?? {}) as {
+      emails?: Array<{
+        id: string
+        from: string
+        subject: string
+        snippet: string
+        date: string
+      }>
+    }
+    const emails = (searchOutput.emails ?? []).slice(0, 5)
+    const aggregate = requestLooksAggregate(message)
+
+    return {
+      threadTitle: agentText.defaultThreadTitle(locale),
+      intro: aggregate ? agentText.aggregateIntro(locale) : agentText.selectionIntro(locale),
+      steps: searchResult
+        ? [
+            {
+              label: searchResult.label,
+              status: 'completed',
+              detail: searchResult.detail,
+            },
+          ]
+        : [],
+      artifacts: emails.length
+        ? [
+            {
+              type: 'email_list',
+              title:
+                isEnglishLocale(locale)
+                  ? `Here are ${emails.length} matching emails`
+                  : `以下是匹配到的 ${emails.length} 封邮件`,
+              emails,
+            },
+          ]
+        : [],
+      prompt: agentText.selectionPrompt(locale),
     }
   }
 }

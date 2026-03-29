@@ -63,6 +63,11 @@ function EmailSummaryArtifact({
   artifact: Extract<AgentArtifact, { type: 'email_summary' }>
 }) {
   const { t } = useAgentI18n()
+  const normalizedSummary = artifact.summary.trim()
+  const normalizedBulletSummary = artifact.bullets.join(' ').trim()
+  const showSummaryParagraph =
+    normalizedSummary.length > 0 &&
+    (artifact.bullets.length === 0 || normalizedSummary !== normalizedBulletSummary)
 
   return (
     <div className="space-y-5 border-t border-b border-stone-200 py-5">
@@ -81,7 +86,9 @@ function EmailSummaryArtifact({
 
       <div className="space-y-3">
         <p className="text-[1.02rem] font-semibold text-stone-900">{t('ui.summary')}：</p>
-        <p className="text-[1rem] leading-8 text-stone-700">{artifact.summary}</p>
+        {showSummaryParagraph ? (
+          <p className="text-[1rem] leading-8 text-stone-700">{artifact.summary}</p>
+        ) : null}
         {artifact.bullets.length > 0 ? (
           <ul className="space-y-3 pl-6 text-[1rem] leading-8 text-stone-800">
             {artifact.bullets.map((bullet) => (

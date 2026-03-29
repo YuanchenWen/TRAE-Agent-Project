@@ -83,8 +83,8 @@ export class MiniMaxAI extends AIProvider {
   async summarize(text: string, options?: SummarizeOptions): Promise<string> {
     const formatInstruction =
       options?.format === 'bullet'
-        ? 'Return 3 to 6 concise bullet points.'
-        : 'Return one concise paragraph.'
+        ? 'Return 3 to 6 concise plain-text bullet points that each start with "- ".'
+        : 'Return one concise plain-text paragraph.'
     const maxLengthInstruction = options?.maxLength
       ? `Keep the response under about ${options.maxLength} words.`
       : 'Keep the response brief and high signal.'
@@ -92,7 +92,7 @@ export class MiniMaxAI extends AIProvider {
     return this.createTextCompletion({
       system:
         'You summarize email and productivity content for end users. Preserve concrete dates, commitments, blockers, and next steps.',
-      prompt: `Summarize the following content.\n\nRequirements:\n- ${formatInstruction}\n- ${maxLengthInstruction}\n\nContent:\n${text}`,
+      prompt: `Summarize the following content.\n\nRequirements:\n- ${formatInstruction}\n- ${maxLengthInstruction}\n- Do not add headings like "Summary:" or markdown emphasis like **bold**.\n- Do not wrap the answer in code fences.\n\nContent:\n${text}`,
       maxTokens: 900,
       temperature: 0.2,
     })
